@@ -4,3 +4,7 @@ node_modules/
 *.user
 .vscode/
 .idea/
+vcpkg_installed/
+vcpkg-cache/
+paquet/
+capture-*.png
