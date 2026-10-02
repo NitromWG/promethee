@@ -12,11 +12,20 @@
 #include <OpenGl_GraphicDriver.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_LineAspect.hxx>
-#include <TColStd_IndexedDataMapOfStringString.hxx>
 #include <TopLoc_Location.hxx>
 #include <gp_Trsf.hxx>
 
 #include "OcctGlTools.hpp"
+
+// Dictionnaire de texte d'OpenCascade : le nom historique est obsolète depuis la 7.8.
+#if OCC_VERSION_HEX >= 0x070800
+#include <NCollection_IndexedDataMap.hxx>
+#include <TCollection_AsciiString.hxx>
+using DictionnaireTexte = NCollection_IndexedDataMap<TCollection_AsciiString, TCollection_AsciiString>;
+#else
+#include <TColStd_IndexedDataMapOfStringString.hxx>
+using DictionnaireTexte = TColStd_IndexedDataMapOfStringString;
+#endif
 #include "promethee/geometrie.hpp"
 
 using namespace prom;
@@ -115,10 +124,10 @@ void Vue3D::initializeGL() {
     return;
   }
   makeCurrent();
-  TColStd_IndexedDataMapOfStringString infos;
+  DictionnaireTexte infos;
   m_vue->DiagnosticInformation(infos, Graphic3d_DiagnosticInfo_Basic);
   m_infoGl.clear();
-  for (TColStd_IndexedDataMapOfStringString::Iterator it(infos); it.More(); it.Next())
+  for (DictionnaireTexte::Iterator it(infos); it.More(); it.Next())
     m_infoGl += QString::fromUtf8(it.Key().ToCString()) + QStringLiteral(" : ") + QString::fromUtf8(it.Value().ToCString()) + QLatin1Char('\n');
   const bool premier = !m_pret;
   m_pret = true;
