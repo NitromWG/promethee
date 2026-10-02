@@ -20,6 +20,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake ninja-build g++ libtbb-dev catch2 nlohmann-json3-dev \
+            libfontconfig-dev libx11-dev \
             libocct-modeling-algorithms-dev libocct-modeling-data-dev libocct-data-exchange-dev libocct-foundation-dev
       - name: Configuration
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -36,8 +37,9 @@ jobs:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
     steps:
       - uses: actions/checkout@v4
-      - name: Cache des paquets vcpkg compilés
-        uses: actions/cache@v4
+      - name: Récupération des paquets vcpkg déjà compilés
+        id: cache-vcpkg
+        uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}\vcpkg-cache
           key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
@@ -49,9 +51,20 @@ jobs:
           git clone https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP\vcpkg"
           git -C "$env:RUNNER_TEMP\vcpkg" checkout $env:VCPKG_COMMIT
           & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
-      - name: Configuration (compile OpenCascade au premier passage, environ une heure)
+      - name: Dépendances (compile OpenCascade au premier passage, environ une heure)
         shell: pwsh
-        run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP\vcpkg\scripts\buildsystems\vcpkg.cmake"
+        run: |
+          & "$env:RUNNER_TEMP\vcpkg\vcpkg.exe" install --triplet x64-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Sauvegarde des paquets compilés, même en cas d'échec plus loin
+        if: always() && steps.cache-vcpkg.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}\vcpkg-cache
+          key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
+      - name: Configuration
+        shell: pwsh
+        run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP\vcpkg\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_MANIFEST_INSTALL=OFF -DVCPKG_INSTALLED_DIR="${{ github.workspace }}\vcpkg_installed"
       - name: Compilation
         run: cmake --build build --config Release
       - name: Tests
