@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <system_error>
 
 #include "promethee/derive.hpp"
 #include "promethee/geometrie.hpp"
@@ -61,11 +62,16 @@ TEST_CASE("Les pièces passent par le STEP sans perte") {
   const TopoDS_Shape relu = lireStep(chemin);
   CHECK(nombreSolides(relu) == 2);
   CHECK(volume(relu) == Approx(volume(corps) + volume(couvercle)).epsilon(1e-6));
-  std::ifstream f(chemin);
-  std::stringstream s;
-  s << f.rdbuf();
-  CHECK(s.str().find("Couvercle") != std::string::npos);
-  fs::remove_all(dossier);
+  std::string contenu;
+  {
+    std::ifstream f(chemin);  // refermé à la fin du bloc : Windows refuse d'effacer un fichier ouvert
+    std::stringstream s;
+    s << f.rdbuf();
+    contenu = s.str();
+  }
+  CHECK(contenu.find("Couvercle") != std::string::npos);
+  std::error_code ec;
+  fs::remove_all(dossier, ec);
 }
 
 TEST_CASE("Les pièces sont posées sur le plateau, couvercle retourné") {
@@ -81,7 +87,8 @@ TEST_CASE("Les pièces sont posées sur le plateau, couvercle retourné") {
   const fs::path stl = fs::temp_directory_path() / "promethee_couvercle.stl";
   exporterStl(couvercle, stl.string());
   CHECK(fs::file_size(stl) > 10000);
-  fs::remove(stl);
+  std::error_code ec;
+  fs::remove(stl, ec);
 }
 
 TEST_CASE("La géométrie suit le modèle : agrandir la carte agrandit le boîtier") {
