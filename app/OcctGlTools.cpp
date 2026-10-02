@@ -21,8 +21,12 @@
 
 // Prométhée : intégration du visualiseur OpenCascade dans un QOpenGLWidget.
 #ifdef _WIN32
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #endif
 
@@ -60,7 +64,7 @@ Handle(OpenGl_Context) contexteGl(const Handle(V3d_View)& vue) {
   return vueGl->GlWindow()->GetGlContext();
 }
 
-Aspect_Drawable fenetreNativeGl(Aspect_Drawable fenetre) {
+Aspect_Drawable fenetreNativeGl([[maybe_unused]] Aspect_Drawable fenetre) {
 #ifdef _WIN32
   // QOpenGLWidget dessine dans une fenêtre cachée : on reprend celle du contexte courant.
   return (Aspect_Drawable)WindowFromDC(wglGetCurrentDC());
