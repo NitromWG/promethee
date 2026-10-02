@@ -1,3 +1,6 @@
 add_executable(promethee promethee.cpp)
 target_link_libraries(promethee PRIVATE Promethee::noyau Promethee::geometrie)
+if(WIN32)
+  target_sources(promethee PRIVATE ${PROJECT_SOURCE_DIR}/cmake/utf8.manifest)
+endif()
 install(TARGETS promethee RUNTIME DESTINATION bin)
