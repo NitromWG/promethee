@@ -1,0 +1,72 @@
+name: Compilation et tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Un nouvel envoi annule la compilation en cours de la même branche.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux (Ubuntu 24.04, OpenCascade 7.6)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ libtbb-dev catch2 nlohmann-json3-dev \
+            libocct-modeling-algorithms-dev libocct-modeling-data-dev libocct-data-exchange-dev libocct-foundation-dev
+      - name: Configuration
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Compilation
+        run: cmake --build build
+      - name: Tests
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    name: Windows (MSVC, vcpkg, OpenCascade 8)
+    runs-on: windows-2022
+    env:
+      VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache des paquets vcpkg compilés
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\vcpkg-cache
+          key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-windows-
+      - name: vcpkg à une version figée
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
+          git clone https://github.com/microsoft/vcpkg "$env:RUNNER_TEMP\vcpkg"
+          git -C "$env:RUNNER_TEMP\vcpkg" checkout $env:VCPKG_COMMIT
+          & "$env:RUNNER_TEMP\vcpkg\bootstrap-vcpkg.bat" -disableMetrics
+      - name: Configuration (compile OpenCascade au premier passage, environ une heure)
+        shell: pwsh
+        run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP\vcpkg\scripts\buildsystems\vcpkg.cmake"
+      - name: Compilation
+        run: cmake --build build --config Release
+      - name: Tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  macos:
+    name: macOS (Apple Silicon, Homebrew)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances
+        run: brew install ninja opencascade nlohmann-json catch2
+      - name: Configuration
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+      - name: Compilation
+        run: cmake --build build
+      - name: Tests
+        run: ctest --test-dir build --output-on-failure
