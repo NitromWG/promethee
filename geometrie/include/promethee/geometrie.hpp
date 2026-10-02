@@ -16,6 +16,10 @@ namespace prom {
 TopoDS_Shape construireCorps(const Projet& p, const Derive& d);
 TopoDS_Shape construireCouvercle(const Projet& p, const Derive& d);
 
+// Carte électronique percée de ses trous de fixation, et volume simplifié d'un composant (pour l'affichage 3D).
+TopoDS_Shape construireCarte(const Projet& p, const Derive& d);
+TopoDS_Shape construireComposant(const Derive& d, const GeoComp& g);
+
 double volume(const TopoDS_Shape& s);           // mm³
 bool estValide(const TopoDS_Shape& s);          // topologie et géométrie saines
 int nombreSolides(const TopoDS_Shape& s);

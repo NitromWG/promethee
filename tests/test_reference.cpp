@@ -9,6 +9,7 @@
 
 #include "promethee/derive.hpp"
 #include "promethee/modele.hpp"
+#include "promethee/placement.hpp"
 #include "promethee/verifs.hpp"
 
 using namespace prom;
@@ -159,4 +160,18 @@ TEST_CASE("Les corrections automatiques suivent la même séquence") {
     INFO(cas.at("nom").get<std::string>() << rapport(e));
     CHECK(e.empty());
   }
+}
+
+TEST_CASE("L'ajout automatique place les éléments aux mêmes endroits que le prototype") {
+  const Json* attendu = nullptr;
+  for (const auto& cas : reference().at("cas")) if (cas.at("nom") == "encombre") attendu = &cas.at("projet");
+  REQUIRE(attendu != nullptr);
+  Projet p = projetVide();
+  for (const char* type : {"usbc", "led", "led", "bouton", "module", "condo", "jst", "capteur", "ic", "jack"}) CHECK_FALSE(ajouterComposant(p, type).empty());
+  CHECK_FALSE(ajouterTrou(p).empty());
+  Json obtenu = versJson(p), ref = *attendu;
+  std::vector<std::string> e;
+  comparer(obtenu, ref, "encombre", true, e);
+  INFO(rapport(e));
+  CHECK(e.empty());
 }

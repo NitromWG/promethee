@@ -11,6 +11,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(PROMETHEE_TESTS "Compiler les tests" ON)
+option(PROMETHEE_APP "Compiler l'application de bureau (Qt 6)" ON)
 
 if(MSVC)
   add_compile_options(/W4 /utf-8 /permissive-)
@@ -24,6 +25,9 @@ find_package(OpenCASCADE REQUIRED)
 add_subdirectory(noyau)
 add_subdirectory(geometrie)
 add_subdirectory(outils)
+if(PROMETHEE_APP)
+  add_subdirectory(app)
+endif()
 
 if(PROMETHEE_TESTS)
   enable_testing()

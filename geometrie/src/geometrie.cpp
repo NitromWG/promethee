@@ -16,6 +16,7 @@
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <Bnd_Box.hxx>
@@ -179,6 +180,22 @@ TopoDS_Shape construireCouvercle(const Projet& p, const Derive& d) {
   for (const auto& o : percagesValides(d)) percages.push_back(cylindre(o.x, o.y, d.zt - 1, o.d / 2, e + 2));
   couvercle = booleen(false, couvercle, percages);
   return unifier(couvercle);
+}
+
+TopoDS_Shape construireCarte(const Projet& p, const Derive& d) {
+  const auto& c = p.carte;
+  const TopoDS_Shape plaque = prismeRR(c.x0, c.y0, c.L / 2, c.W / 2, c.r, d.zpb, c.t);
+  std::vector<TopoDS_Shape> trous;
+  for (const auto& t : d.trous)
+    if (sdRR(t.x, t.y, c.x0, c.y0, c.L / 2, c.W / 2, c.r) < -(d.vis.trou / 2 + 0.05)) trous.push_back(cylindre(t.x, t.y, d.zpb - 1, d.vis.trou / 2, c.t + 2));
+  return booleen(false, plaque, trous);
+}
+
+TopoDS_Shape construireComposant(const Derive& d, const GeoComp& g) {
+  const TypeComposant* T = typeComposant(g.type);
+  const double h = std::max(0.2, g.h);
+  if (T && T->rond) return cylindre(g.x, g.y, d.zpt, std::max(0.1, std::min(g.hx, g.hy)), h);
+  return BRepPrimAPI_MakeBox(gp_Pnt(g.x - g.hx, g.y - g.hy, d.zpt), std::max(0.1, 2 * g.hx), std::max(0.1, 2 * g.hy), h).Shape();
 }
 
 double volume(const TopoDS_Shape& s) {

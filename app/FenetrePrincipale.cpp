@@ -1,0 +1,231 @@
+// Prométhée : fenêtre principale. Licence GPL-3.0-only.
+#include "FenetrePrincipale.hpp"
+
+#include <QActionGroup>
+#include <QApplication>
+#include <QCloseEvent>
+#include <QDockWidget>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QLabel>
+#include <QMenuBar>
+#include <QMessageBox>
+#include <QSplitter>
+#include <QStatusBar>
+#include <QToolBar>
+#include <QVBoxLayout>
+
+#include <filesystem>
+
+#include "Document.hpp"
+#include "Panneau.hpp"
+#include "Vue3D.hpp"
+#include "VueCarte.hpp"
+#include "promethee/geometrie.hpp"
+#include "promethee/placement.hpp"
+
+using namespace prom;
+
+namespace {
+QWidget* cadre(const QString& titre, QWidget* vue, QToolBar* outils) {
+  auto* w = new QWidget;
+  auto* l = new QVBoxLayout(w);
+  l->setContentsMargins(0, 0, 0, 0);
+  l->setSpacing(0);
+  auto* entete = new QToolBar;
+  auto* t = new QLabel(QStringLiteral("  ") + titre + QStringLiteral("  "));
+  t->setStyleSheet(QStringLiteral("font-weight: 600;"));
+  entete->addWidget(t);
+  entete->addActions(outils->actions());
+  l->addWidget(entete);
+  l->addWidget(vue, 1);
+  return w;
+}
+}  // namespace
+
+FenetrePrincipale::FenetrePrincipale() : m_doc(new Document(this)) {
+  m_carte = new VueCarte(m_doc);
+  m_vue3d = new Vue3D(m_doc);
+  m_panneau = new Panneau(m_doc);
+
+  QToolBar outilsCarte, outilsBoitier;
+  QAction* recadrerCarte = outilsCarte.addAction(QStringLiteral("Recadrer"));
+  connect(recadrerCarte, &QAction::triggered, m_carte, &VueCarte::recadrer);
+  auto* groupeCouvercle = new QActionGroup(this);
+  const std::pair<QString, Vue3D::Couvercle> modes[] = {{QStringLiteral("Ouvert"), Vue3D::Couvercle::Masque}, {QStringLiteral("Fermé"), Vue3D::Couvercle::Pose},
+                                                        {QStringLiteral("Éclaté"), Vue3D::Couvercle::Souleve}};
+  for (const auto& [nom, mode] : modes) {
+    QAction* a = outilsBoitier.addAction(nom);
+    a->setCheckable(true);
+    a->setChecked(mode == Vue3D::Couvercle::Souleve);
+    groupeCouvercle->addAction(a);
+    const Vue3D::Couvercle m = mode;
+    connect(a, &QAction::triggered, this, [this, m] { m_vue3d->setCouvercle(m); });
+  }
+  QAction* recadrer3d = outilsBoitier.addAction(QStringLiteral("Recadrer"));
+  connect(recadrer3d, &QAction::triggered, m_vue3d, &Vue3D::recadrer);
+
+  auto* separation = new QSplitter(Qt::Horizontal);
+  separation->addWidget(cadre(QStringLiteral("Carte"), m_carte, &outilsCarte));
+  separation->addWidget(cadre(QStringLiteral("Boîtier"), m_vue3d, &outilsBoitier));
+  separation->setStretchFactor(0, 1);
+  separation->setStretchFactor(1, 1);
+  setCentralWidget(separation);
+
+  auto* dock = new QDockWidget(QStringLiteral("Détails"), this);
+  dock->setObjectName(QStringLiteral("details"));
+  dock->setWidget(m_panneau);
+  dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+  addDockWidget(Qt::RightDockWidgetArea, dock);
+
+  // Menus
+  QMenu* fichier = menuBar()->addMenu(QStringLiteral("&Fichier"));
+  fichier->addAction(QStringLiteral("&Nouveau projet"), QKeySequence::New, this, [this] { if (confirmerAbandon()) m_doc->nouveau(); });
+  fichier->addAction(QStringLiteral("&Ouvrir…"), QKeySequence::Open, this, [this] {
+    if (!confirmerAbandon()) return;
+    const QString chemin = QFileDialog::getOpenFileName(this, QStringLiteral("Ouvrir un projet"), QString(), QStringLiteral("Projets Prométhée (*.json)"));
+    if (!chemin.isEmpty()) ouvrirFichier(chemin);
+  });
+  fichier->addAction(QStringLiteral("&Enregistrer"), QKeySequence::Save, this, [this] { enregistrer(false); });
+  fichier->addAction(QStringLiteral("Enregistrer &sous…"), QKeySequence::SaveAs, this, [this] { enregistrer(true); });
+  fichier->addSeparator();
+  fichier->addAction(QStringLiteral("Recharger l’exemple"), this, [this] { if (confirmerAbandon()) m_doc->exemple(); });
+  fichier->addAction(QStringLiteral("E&xporter le dossier de fabrication…"), QKeySequence(Qt::CTRL | Qt::Key_E), this, [this] { exporterDossier(); });
+  fichier->addSeparator();
+  fichier->addAction(QStringLiteral("&Quitter"), QKeySequence::Quit, this, &QWidget::close);
+
+  QMenu* edition = menuBar()->addMenu(QStringLiteral("É&dition"));
+  QAction* annuler = edition->addAction(QStringLiteral("&Annuler"), QKeySequence::Undo, m_doc, &Document::annuler);
+  QAction* retablir = edition->addAction(QStringLiteral("&Rétablir"), QKeySequence::Redo, m_doc, &Document::retablir);
+
+  QMenu* ajouter = menuBar()->addMenu(QStringLiteral("&Ajouter"));
+  ajouter->addAction(QStringLiteral("Trou de fixation"), this, [this] {
+    std::string id;
+    m_doc->modifier([&](Projet& p) { id = ajouterTrou(p); });
+    m_doc->selectionner({Cible::Trou, id});
+  });
+  ajouter->addSeparator();
+  for (const auto& T : typesComposants()) {
+    const std::string cle = T.cle;
+    QString nom = QString::fromStdString(T.nom);
+    if (T.bord) nom += QStringLiteral(" (perce la paroi)");
+    else if (T.couvercle > 0) nom += QStringLiteral(" (perce le couvercle)");
+    ajouter->addAction(nom, this, [this, cle] {
+      std::string id;
+      m_doc->modifier([&](Projet& p) { id = ajouterComposant(p, cle); });
+      m_doc->selectionner({Cible::Composant, id});
+    });
+  }
+
+  QMenu* affichage = menuBar()->addMenu(QStringLiteral("Affic&hage"));
+  affichage->addAction(QStringLiteral("Recadrer les deux vues"), QKeySequence(Qt::Key_F), this, [this] { m_carte->recadrer(); m_vue3d->recadrer(); });
+  affichage->addSection(QStringLiteral("Couvercle"));
+  affichage->addActions(groupeCouvercle->actions());
+
+  QMenu* aide = menuBar()->addMenu(QStringLiteral("Ai&de"));
+  aide->addAction(QStringLiteral("À propos de Prométhée"), this, [this] {
+    QMessageBox::about(this, QStringLiteral("À propos de Prométhée"),
+                       QStringLiteral("<h3>Prométhée 0.2</h3><p>Plateforme libre d’ingénierie intégrée : la carte électronique et son boîtier forment un seul modèle.</p>"
+                                      "<p>Vue Carte : glisser un composant, un trou ou une poignée du bord de la carte, molette pour zoomer, double-clic pour pivoter. "
+                                      "Vue Boîtier : bouton gauche pour tourner, droit pour déplacer, molette pour zoomer.</p>"
+                                      "<p>Licence GPL-3.0. Géométrie : Open CASCADE Technology. Interface : Qt.</p><pre>%1</pre>")
+                           .arg(m_vue3d->infoGl().toHtmlEscaped()));
+  });
+
+  auto* barre = addToolBar(QStringLiteral("Principale"));
+  barre->setObjectName(QStringLiteral("principale"));
+  barre->addAction(annuler);
+  barre->addAction(retablir);
+  barre->addSeparator();
+  QAction* exporter = barre->addAction(QStringLiteral("Dossier de fabrication"));
+  connect(exporter, &QAction::triggered, this, [this] { exporterDossier(); });
+
+  m_etat = new QLabel;
+  statusBar()->addPermanentWidget(m_etat);
+  auto majHistorique = [annuler, retablir, this] {
+    annuler->setEnabled(m_doc->peutAnnuler());
+    retablir->setEnabled(m_doc->peutRetablir());
+    majEtat();
+  };
+  connect(m_doc, &Document::etatChange, this, majHistorique);
+  connect(m_doc, &Document::change, this, [this] { majEtat(); });
+  majHistorique();
+  resize(1440, 860);
+}
+
+void FenetrePrincipale::majEtat() {
+  const int erreurs = m_doc->nombreErreurs();
+  const int alertes = static_cast<int>(m_doc->problemes().size()) - erreurs;
+  if (erreurs) m_etat->setText(QStringLiteral("<span style='color:#C2402E'><b>%1 erreur%2</b></span>").arg(erreurs).arg(erreurs > 1 ? "s" : ""));
+  else if (alertes) m_etat->setText(QStringLiteral("<span style='color:#A87410'><b>%1 alerte%2</b></span>").arg(alertes).arg(alertes > 1 ? "s" : ""));
+  else m_etat->setText(QStringLiteral("<span style='color:#2F7D53'><b>Tout est cohérent</b></span>"));
+  const QString nom = m_doc->chemin().isEmpty() ? QString::fromStdString(m_doc->projet().nom) : QFileInfo(m_doc->chemin()).fileName();
+  setWindowTitle(nom + QStringLiteral("[*] – Prométhée"));
+  setWindowModified(m_doc->modifie());
+}
+
+void FenetrePrincipale::ouvrirFichier(const QString& chemin) {
+  try {
+    m_doc->ouvrir(chemin);
+    m_carte->recadrer();
+    m_vue3d->recadrer();
+  } catch (const std::exception& e) {
+    QMessageBox::warning(this, QStringLiteral("Ouverture impossible"), QString::fromUtf8(e.what()));
+  }
+}
+
+bool FenetrePrincipale::enregistrer(bool sousNouveauNom) {
+  QString chemin = m_doc->chemin();
+  if (sousNouveauNom || chemin.isEmpty()) {
+    chemin = QFileDialog::getSaveFileName(this, QStringLiteral("Enregistrer le projet"), QString::fromStdString(m_doc->projet().nom) + QStringLiteral(".prom.json"),
+                                          QStringLiteral("Projets Prométhée (*.json)"));
+    if (chemin.isEmpty()) return false;
+  }
+  try {
+    m_doc->enregistrer(chemin);
+    statusBar()->showMessage(QStringLiteral("Projet enregistré."), 3000);
+    return true;
+  } catch (const std::exception& e) {
+    QMessageBox::warning(this, QStringLiteral("Enregistrement impossible"), QString::fromUtf8(e.what()));
+    return false;
+  }
+}
+
+bool FenetrePrincipale::confirmerAbandon() {
+  if (!m_doc->modifie()) return true;
+  const auto r = QMessageBox::question(this, QStringLiteral("Modifications non enregistrées"), QStringLiteral("Enregistrer les modifications du projet ?"),
+                                       QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+  if (r == QMessageBox::Save) return enregistrer(false);
+  return r == QMessageBox::Discard;
+}
+
+void FenetrePrincipale::closeEvent(QCloseEvent* e) {
+  if (confirmerAbandon()) e->accept();
+  else e->ignore();
+}
+
+void FenetrePrincipale::exporterDossier() {
+  if (m_doc->nombreErreurs() > 0 &&
+      QMessageBox::question(this, QStringLiteral("Le projet contient des erreurs"), QStringLiteral("Les pièces seront générées telles quelles. Continuer ?")) != QMessageBox::Yes)
+    return;
+  const QString dossier = QFileDialog::getExistingDirectory(this, QStringLiteral("Dossier de fabrication"));
+  if (dossier.isEmpty()) return;
+  try {
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const Projet& p = m_doc->projet();
+    const Derive& d = m_doc->derive();
+    const TopoDS_Shape corps = construireCorps(p, d), couvercle = construireCouvercle(p, d);
+    const std::filesystem::path base = std::filesystem::path(dossier.toStdU16String());
+    exporterStep({{"Boîtier", corps, 0.83, 0.85, 0.83}, {"Couvercle", couvercle, 0.90, 0.91, 0.90}, {"Carte", construireCarte(p, d), 0.18, 0.42, 0.31}},
+                 (base / "boitier.step").string());
+    exporterStl(pourImpression(corps, false, d.cx, d.cy), (base / "boitier.stl").string());
+    exporterStl(pourImpression(couvercle, true, d.cx, d.cy), (base / "couvercle.stl").string());
+    ecrireProjet(p, (base / "projet.prom.json").string());
+    QApplication::restoreOverrideCursor();
+    QMessageBox::information(this, QStringLiteral("Dossier de fabrication"),
+                             QStringLiteral("Écrit dans %1 : boitier.step (assemblage avec la carte), boitier.stl et couvercle.stl prêts à imprimer, projet.prom.json.").arg(dossier));
+  } catch (const std::exception& e) {
+    QApplication::restoreOverrideCursor();
+    QMessageBox::warning(this, QStringLiteral("Export impossible"), QString::fromUtf8(e.what()));
+  }
+}
