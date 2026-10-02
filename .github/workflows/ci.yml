@@ -2,7 +2,9 @@ name: Compilation et tests
 
 on:
   push:
+    paths-ignore: ['**.md']
   pull_request:
+    paths-ignore: ['**.md']
   workflow_dispatch:
 
 # Un nouvel envoi annule la compilation en cours de la même branche.
@@ -20,14 +22,23 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake ninja-build g++ libtbb-dev catch2 nlohmann-json3-dev \
-            libfontconfig-dev libx11-dev \
-            libocct-modeling-algorithms-dev libocct-modeling-data-dev libocct-data-exchange-dev libocct-foundation-dev
+            libfontconfig-dev libx11-dev qt6-base-dev libgl-dev libglu1-mesa-dev xvfb xauth libgl1-mesa-dri \
+            libocct-modeling-algorithms-dev libocct-modeling-data-dev libocct-data-exchange-dev libocct-foundation-dev libocct-visualization-dev
       - name: Configuration
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Compilation
         run: cmake --build build
       - name: Tests
         run: ctest --test-dir build --output-on-failure
+      - name: Essai de l'application avec capture d'écran
+        if: hashFiles('app/CMakeLists.txt') != ''
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" build/app/Promethee --essai --capture capture-linux.png
+      - name: Capture
+        if: hashFiles('capture-linux.png') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-linux
+          path: capture-linux.png
 
   windows:
     name: Windows (MSVC, vcpkg, OpenCascade 8)
@@ -62,13 +73,34 @@ jobs:
         with:
           path: ${{ github.workspace }}\vcpkg-cache
           key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
+      - name: Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          arch: win64_msvc2022_64
+          cache: true
       - name: Configuration
         shell: pwsh
-        run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP\vcpkg\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_MANIFEST_INSTALL=OFF -DVCPKG_INSTALLED_DIR="${{ github.workspace }}\vcpkg_installed"
+        run: cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE="$env:RUNNER_TEMP\vcpkg\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows -DVCPKG_MANIFEST_INSTALL=OFF -DVCPKG_INSTALLED_DIR="${{ github.workspace }}\vcpkg_installed" -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
       - name: Compilation
         run: cmake --build build --config Release
       - name: Tests
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Paquet de l'application, prêt à lancer
+        if: hashFiles('app/CMakeLists.txt') != ''
+        shell: pwsh
+        run: |
+          & "$env:QT_ROOT_DIR\bin\windeployqt.exe" --release --no-translations --compiler-runtime build\app\Release\Promethee.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path paquet\Promethee | Out-Null
+          Copy-Item -Recurse build\app\Release\* paquet\Promethee\
+          Copy-Item LICENSE, TIERS.md paquet\Promethee\
+      - name: Envoi du paquet
+        if: hashFiles('app/CMakeLists.txt') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: Promethee-Windows
+          path: paquet
 
   macos:
     name: macOS (Apple Silicon, Homebrew)
@@ -76,7 +108,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Dépendances
-        run: brew install ninja opencascade nlohmann-json catch2
+        run: brew install ninja opencascade nlohmann-json catch2 qt
       - name: Configuration
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix)"
       - name: Compilation
