@@ -17,7 +17,7 @@ jobs:
     name: Linux (Ubuntu 24.04, OpenCascade 7.6)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Dépendances
         run: |
           sudo apt-get update
@@ -35,7 +35,7 @@ jobs:
         run: xvfb-run -a -s "-screen 0 1600x1000x24" build/app/Promethee --essai --capture capture-linux.png
       - name: Capture
         if: hashFiles('capture-linux.png') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: capture-linux
           path: capture-linux.png
@@ -47,10 +47,10 @@ jobs:
       VCPKG_COMMIT: 9e593bb18ea69cc5095e012465dcd675a822ed0d
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Récupération des paquets vcpkg déjà compilés
         id: cache-vcpkg
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}\vcpkg-cache
           key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
@@ -69,7 +69,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Sauvegarde des paquets compilés, même en cas d'échec plus loin
         if: always() && steps.cache-vcpkg.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ${{ github.workspace }}\vcpkg-cache
           key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
@@ -97,7 +97,7 @@ jobs:
           Copy-Item LICENSE, TIERS.md paquet\Promethee\
       - name: Envoi du paquet
         if: hashFiles('app/CMakeLists.txt') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Promethee-Windows
           path: paquet
@@ -106,7 +106,7 @@ jobs:
     name: macOS (Apple Silicon, Homebrew)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Dépendances
         run: brew install ninja opencascade nlohmann-json catch2 qt
       - name: Configuration
