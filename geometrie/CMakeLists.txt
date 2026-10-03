@@ -1,4 +1,4 @@
-add_library(promethee_geometrie src/geometrie.cpp)
+add_library(promethee_geometrie src/geometrie.cpp src/echanges.cpp)
 add_library(Promethee::geometrie ALIAS promethee_geometrie)
 target_include_directories(promethee_geometrie PUBLIC include)
 target_include_directories(promethee_geometrie SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
@@ -8,9 +8,9 @@ target_include_directories(promethee_geometrie SYSTEM PUBLIC ${OpenCASCADE_INCLU
 set(PROMETHEE_OCCT TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKGeomAlgo TKTopAlgo TKPrim TKBO TKBool
     TKShHealing TKMesh TKXSBase TKLCAF TKCAF TKCDF TKXCAF)
 if(TARGET TKDESTEP)
-  list(APPEND PROMETHEE_OCCT TKDE TKDESTEP TKDESTL)
+  list(APPEND PROMETHEE_OCCT TKDE TKDESTEP TKDESTL TKDEIGES)
 else()
-  list(APPEND PROMETHEE_OCCT TKSTEPBase TKSTEPAttr TKSTEP209 TKSTEP TKSTL TKXDESTEP)
+  list(APPEND PROMETHEE_OCCT TKSTEPBase TKSTEPAttr TKSTEP209 TKSTEP TKSTL TKXDESTEP TKIGES)
 endif()
 target_link_libraries(promethee_geometrie PUBLIC Promethee::noyau ${PROMETHEE_OCCT})
 message(STATUS "OpenCascade ${OpenCASCADE_VERSION} : ${PROMETHEE_OCCT}")

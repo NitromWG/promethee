@@ -12,6 +12,8 @@
 #include <AIS_InteractiveContext.hxx>
 #include <AIS_Shape.hxx>
 #include <AIS_ViewController.hxx>
+#include <AIS_ViewCube.hxx>
+#include <V3d_TypeOfOrientation.hxx>
 #include <V3d_View.hxx>
 
 #include "Document.hpp"
@@ -25,6 +27,7 @@ public:
 
   void setCouvercle(Couvercle c);
   void recadrer();
+  void vueStandard(V3d_TypeOfOrientation orientation);  // transition animée vers une vue normalisée
   const QString& infoGl() const { return m_infoGl; }
   QSize minimumSizeHint() const override { return {240, 200}; }
   QSize sizeHint() const override { return {640, 480}; }
@@ -51,6 +54,7 @@ private:
   Handle(V3d_View) m_vue;
   Handle(AIS_InteractiveContext) m_ctx;
   Handle(AIS_Shape) m_corps, m_couvercle, m_carte;
+  Handle(AIS_ViewCube) m_cube;
   std::map<std::string, Handle(AIS_Shape)> m_composants;
   std::string m_sigCorps, m_sigCouvercle, m_sigCarte;
   QTimer m_minuteur;

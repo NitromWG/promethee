@@ -16,21 +16,22 @@ GeoComp geoComp(const Projet& p, const Derive& d, const Composant& k) {
   GeoComp g;
   g.id = k.id; g.ref = k.ref; g.type = k.type; g.h = k.h; g.top = d.zpt + k.h; g.bord = k.bord; g.w = k.w; g.d = k.d;
   if (k.bord) {
-    const double jeu = p.boitier.jeu;
+    const double jeu = p.boitier.jeu, u = leLongComposant(p, k);
     if (*k.bord == Bord::E || *k.bord == Bord::W) {
       const double s = *k.bord == Bord::E ? 1 : -1;
       g.face = c.x0 + s * (c.L / 2 + jeu - k.ecart);
-      g.x = g.face - s * k.d / 2; g.y = k.le_long; g.hx = k.d / 2; g.hy = k.w / 2;
+      g.x = g.face - s * k.d / 2; g.y = u; g.hx = k.d / 2; g.hy = k.w / 2;
     } else {
       const double s = *k.bord == Bord::N ? 1 : -1;
       g.face = c.y0 + s * (c.W / 2 + jeu - k.ecart);
-      g.y = g.face - s * k.d / 2; g.x = k.le_long; g.hx = k.w / 2; g.hy = k.d / 2;
+      g.y = g.face - s * k.d / 2; g.x = u; g.hx = k.w / 2; g.hy = k.d / 2;
     }
-    g.decoupe = DecoupeMur{*k.bord, k.le_long, d.zpt + k.zc, k.decoupe.w, k.decoupe.h, k.decoupe.r};
+    g.decoupe = DecoupeMur{*k.bord, u, d.zpt + k.zc, k.decoupe.w, k.decoupe.h, k.decoupe.r};
     switch (*k.bord) { case Bord::E: g.rot = 0; break; case Bord::N: g.rot = 90; break; case Bord::W: g.rot = 180; break; default: g.rot = 270; }
   } else {
     const bool echange = k.rot == 90 || k.rot == 270;
-    g.x = k.x; g.y = k.y;
+    const Point q = posComposant(p, k);
+    g.x = q.x; g.y = q.y;
     g.hx = (echange ? k.d : k.w) / 2; g.hy = (echange ? k.w : k.d) / 2; g.rot = k.rot;
   }
   g.x1 = g.x - g.hx; g.x2 = g.x + g.hx; g.y1 = g.y - g.hy; g.y2 = g.y + g.hy;
@@ -73,7 +74,20 @@ Derive deriver(const Projet& p) {
   d.lo = {d.Li / 2 - Levre::jeu, d.Wi / 2 - Levre::jeu, std::max(d.ri - Levre::jeu, 0.3)};
   d.li = {d.lo.hx - Levre::ep, d.lo.hy - Levre::ep, std::max(d.lo.r - Levre::ep, 0.3)};
   d.sb = d.Li / 2 - d.ri; d.sa = d.Wi / 2 - d.ri;
-  for (const auto& t : p.trous) { const Point q = posTrou(p, t); d.trous.push_back({t.id, t.ref, q.x, q.y}); }
+  for (const auto& t : p.trous) {
+    const Point q = posTrou(p, t);
+    TrouPlace tp;
+    tp.id = t.id; tp.ref = t.ref; tp.x = q.x; tp.y = q.y;
+    tp.nomVis = t.vis.value_or(b.vis);
+    tp.vis = vis(tp.nomVis);
+    tp.insert = t.fixation == "insert";
+    tp.rp = tp.insert ? insert(tp.nomVis).trou / 2 : tp.vis.avant / 2;
+    tp.Rb = tp.rp + PAROI_PILIER;
+    tp.rTete = tp.vis.tete / 2 + 0.6;
+    tp.longInsert = tp.insert ? insert(tp.nomVis).longueur : 0;
+    tp.longVis = longueurVis(c.t, tp.vis);
+    d.trous.push_back(tp);
+  }
   for (const auto& k : p.composants) d.comps.push_back(geoComp(p, d, k));
   d.longVis = longueurVis(c.t, v);
   d.H = b.hauteurAuto ? borne(hauteurIdeale(p, d), b.entretoise + c.t + 1, 200) : b.hauteur;
@@ -103,10 +117,10 @@ std::map<Bord, std::vector<DecoupeValide>> decoupesValides(const Derive& d) {
 std::vector<PilierValide> piliersValides(const Derive& d) {
   std::vector<PilierValide> res;
   for (const auto& t : d.trous) {
-    if (sdRR(t.x, t.y, d.cx, d.cy, d.Li / 2, d.Wi / 2, d.ri) > -(d.Rb + 0.25)) continue;
-    const bool conflit = std::any_of(res.begin(), res.end(), [&](const PilierValide& q) { return std::hypot(q.x - t.x, q.y - t.y) < 2 * d.Rb + 0.25; });
+    if (sdRR(t.x, t.y, d.cx, d.cy, d.Li / 2, d.Wi / 2, d.ri) > -(t.Rb + 0.25)) continue;
+    const bool conflit = std::any_of(res.begin(), res.end(), [&](const PilierValide& q) { return std::hypot(q.x - t.x, q.y - t.y) < q.Rb + t.Rb + 0.25; });
     if (conflit) continue;
-    res.push_back({t.x, t.y, t.id});
+    res.push_back({t.x, t.y, t.id, t.Rb, t.rp});
   }
   return res;
 }

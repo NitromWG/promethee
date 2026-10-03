@@ -39,6 +39,7 @@ private:
   QPointF positionObjet(const Touche& t) const;
   void deplacer(prom::Projet& p, const Touche& t, double x, double y, bool fin) const;
   void redimensionner(prom::Projet& p, char bord, double delta, const prom::Carte& depart) const;
+  bool verrouille(const std::string& id) const;
 
   Document* m_doc;
   double m_s = 6, m_ox = 0, m_oy = 0;

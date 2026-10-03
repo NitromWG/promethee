@@ -35,7 +35,7 @@
 #include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
 #include <TopExp_Explorer.hxx>
-#include <TopTools_ListOfShape.hxx>
+#include <NCollection_List.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Wire.hxx>
@@ -106,7 +106,7 @@ TopoDS_Shape cylindre(double x, double y, double z0, double r, double h) {
 
 TopoDS_Shape booleen(bool fusion, const TopoDS_Shape& a, const std::vector<TopoDS_Shape>& outils) {
   if (outils.empty()) return a;
-  TopTools_ListOfShape args, tools;
+  NCollection_List<TopoDS_Shape> args, tools;  // TopTools_ListOfShape, obsolète depuis OpenCascade 8
   args.Append(a);
   for (const auto& o : outils) tools.Append(o);
   if (fusion) {
@@ -159,8 +159,8 @@ TopoDS_Shape construireCorps(const Projet& p, const Derive& d) {
 
   std::vector<TopoDS_Shape> futs, retraits;
   for (const auto& q : piliersValides(d)) {
-    futs.push_back(cylindre(q.x, q.y, d.zf - 0.5, d.Rb, d.zpb - d.zf + 0.5));   // ancré dans le fond
-    retraits.push_back(cylindre(q.x, q.y, d.zf, d.rp, d.zpb - d.zf + 1));         // avant-trou jusqu'au fond
+    futs.push_back(cylindre(q.x, q.y, d.zf - 0.5, q.Rb, d.zpb - d.zf + 0.5));   // ancré dans le fond
+    retraits.push_back(cylindre(q.x, q.y, d.zf, q.rp, d.zpb - d.zf + 1));         // avant-trou ou logement d'insert
   }
   corps = booleen(true, corps, futs);
   for (const auto& [mur, liste] : decoupesValides(d))
@@ -187,7 +187,7 @@ TopoDS_Shape construireCarte(const Projet& p, const Derive& d) {
   const TopoDS_Shape plaque = prismeRR(c.x0, c.y0, c.L / 2, c.W / 2, c.r, d.zpb, c.t);
   std::vector<TopoDS_Shape> trous;
   for (const auto& t : d.trous)
-    if (sdRR(t.x, t.y, c.x0, c.y0, c.L / 2, c.W / 2, c.r) < -(d.vis.trou / 2 + 0.05)) trous.push_back(cylindre(t.x, t.y, d.zpb - 1, d.vis.trou / 2, c.t + 2));
+    if (sdRR(t.x, t.y, c.x0, c.y0, c.L / 2, c.W / 2, c.r) < -(t.vis.trou / 2 + 0.05)) trous.push_back(cylindre(t.x, t.y, d.zpb - 1, t.vis.trou / 2, c.t + 2));
   return booleen(false, plaque, trous);
 }
 

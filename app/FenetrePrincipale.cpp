@@ -17,6 +17,7 @@
 
 #include <filesystem>
 
+#include "DialogueExport.hpp"
 #include "Document.hpp"
 #include "Panneau.hpp"
 #include "Vue3D.hpp"
@@ -119,13 +120,23 @@ FenetrePrincipale::FenetrePrincipale() : m_doc(new Document(this)) {
 
   QMenu* affichage = menuBar()->addMenu(QStringLiteral("Affic&hage"));
   affichage->addAction(QStringLiteral("Recadrer les deux vues"), QKeySequence(Qt::Key_F), this, [this] { m_carte->recadrer(); m_vue3d->recadrer(); });
+  affichage->addSection(QStringLiteral("Vues de la 3D"));
+  const std::tuple<QString, V3d_TypeOfOrientation, QKeySequence> vues[] = {
+      {QStringLiteral("Isométrique"), V3d_XnegYnegZpos, QKeySequence(Qt::Key_0)}, {QStringLiteral("Face"), V3d_Yneg, QKeySequence(Qt::Key_1)},
+      {QStringLiteral("Dessus"), V3d_Zpos, QKeySequence(Qt::Key_7)}, {QStringLiteral("Droite"), V3d_Xpos, QKeySequence(Qt::Key_3)},
+      {QStringLiteral("Gauche"), V3d_Xneg, QKeySequence()}, {QStringLiteral("Arrière"), V3d_Ypos, QKeySequence()}, {QStringLiteral("Dessous"), V3d_Zneg, QKeySequence()}};
+  for (const auto& [nom, orientation, raccourci] : vues) {
+    const V3d_TypeOfOrientation o = orientation;
+    QAction* a = affichage->addAction(nom, this, [this, o] { m_vue3d->vueStandard(o); });
+    a->setShortcut(raccourci);
+  }
   affichage->addSection(QStringLiteral("Couvercle"));
   affichage->addActions(groupeCouvercle->actions());
 
   QMenu* aide = menuBar()->addMenu(QStringLiteral("Ai&de"));
   aide->addAction(QStringLiteral("À propos de Prométhée"), this, [this] {
     QMessageBox::about(this, QStringLiteral("À propos de Prométhée"),
-                       QStringLiteral("<h3>Prométhée 0.2</h3><p>Plateforme libre d’ingénierie intégrée : la carte électronique et son boîtier forment un seul modèle.</p>"
+                       QStringLiteral("<h3>Prométhée 0.3</h3><p>Plateforme libre d’ingénierie intégrée : la carte électronique et son boîtier forment un seul modèle.</p>"
                                       "<p>Vue Carte : glisser un composant, un trou ou une poignée du bord de la carte, molette pour zoomer, double-clic pour pivoter. "
                                       "Vue Boîtier : bouton gauche pour tourner, droit pour déplacer, molette pour zoomer.</p>"
                                       "<p>Licence GPL-3.0. Géométrie : Open CASCADE Technology. Interface : Qt.</p><pre>%1</pre>")
@@ -206,24 +217,16 @@ void FenetrePrincipale::closeEvent(QCloseEvent* e) {
 
 void FenetrePrincipale::exporterDossier() {
   if (m_doc->nombreErreurs() > 0 &&
-      QMessageBox::question(this, QStringLiteral("Le projet contient des erreurs"), QStringLiteral("Les pièces seront générées telles quelles. Continuer ?")) != QMessageBox::Yes)
+      QMessageBox::question(this, QStringLiteral("Le projet contient des erreurs"), QStringLiteral("Les fichiers seront produits tels quels. Continuer ?")) != QMessageBox::Yes)
     return;
-  const QString dossier = QFileDialog::getExistingDirectory(this, QStringLiteral("Dossier de fabrication"));
-  if (dossier.isEmpty()) return;
+  DialogueExport dialogue(m_doc, this);
+  if (dialogue.exec() != QDialog::Accepted) return;
   try {
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    const Projet& p = m_doc->projet();
-    const Derive& d = m_doc->derive();
-    const TopoDS_Shape corps = construireCorps(p, d), couvercle = construireCouvercle(p, d);
-    const std::filesystem::path base = std::filesystem::path(dossier.toStdU16String());
-    exporterStep({{"Boîtier", corps, 0.83, 0.85, 0.83}, {"Couvercle", couvercle, 0.90, 0.91, 0.90}, {"Carte", construireCarte(p, d), 0.18, 0.42, 0.31}},
-                 (base / "boitier.step").string());
-    exporterStl(pourImpression(corps, false, d.cx, d.cy), (base / "boitier.stl").string());
-    exporterStl(pourImpression(couvercle, true, d.cx, d.cy), (base / "couvercle.stl").string());
-    ecrireProjet(p, (base / "projet.prom.json").string());
+    const QStringList ecrits = dialogue.exporter();
     QApplication::restoreOverrideCursor();
     QMessageBox::information(this, QStringLiteral("Dossier de fabrication"),
-                             QStringLiteral("Écrit dans %1 : boitier.step (assemblage avec la carte), boitier.stl et couvercle.stl prêts à imprimer, projet.prom.json.").arg(dossier));
+                             ecrits.isEmpty() ? QStringLiteral("Aucun format choisi.") : QStringLiteral("Fichiers écrits :\n") + ecrits.join(QStringLiteral("\n")));
   } catch (const std::exception& e) {
     QApplication::restoreOverrideCursor();
     QMessageBox::warning(this, QStringLiteral("Export impossible"), QString::fromUtf8(e.what()));

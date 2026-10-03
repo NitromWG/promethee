@@ -34,7 +34,16 @@ struct GeoComp {
   std::optional<Percage> trouCouvercle;
 };
 
-struct TrouPlace { std::string id, ref; double x = 0, y = 0; };
+struct TrouPlace {
+  std::string id, ref;
+  double x = 0, y = 0;
+  // Fixation propre à ce trou (vis du projet par défaut).
+  std::string nomVis;
+  Vis vis{};
+  bool insert = false;
+  double Rb = 0, rp = 0, rTete = 0, longInsert = 0;
+  int longVis = 0;
+};
 
 struct Derive {
   double cx = 0, cy = 0;
@@ -57,7 +66,7 @@ bool dansLevre(const Derive& d, const GeoComp& g);
 
 // Éléments réellement construits (les cas en erreur sont écartés pour garder des pièces saines).
 struct DecoupeValide { double s = 0, t = 0, w = 0, h = 0, r = 0; std::string id; };
-struct PilierValide { double x = 0, y = 0; std::string id; };
+struct PilierValide { double x = 0, y = 0; std::string id; double Rb = 0, rp = 0; };
 struct PercageValide { double x = 0, y = 0, d = 0; std::string id; };
 std::map<Bord, std::vector<DecoupeValide>> decoupesValides(const Derive& d);
 std::vector<PilierValide> piliersValides(const Derive& d);

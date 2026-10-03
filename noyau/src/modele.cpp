@@ -17,7 +17,7 @@ namespace prom {
 namespace {
 const std::vector<std::pair<std::string, Vis>>& tableVis() {
   static const std::vector<std::pair<std::string, Vis>> t = {
-      {"M2", {2.0, 2.2, 1.6, 3.8}}, {"M2.5", {2.5, 2.7, 2.0, 4.5}}, {"M3", {3.0, 3.2, 2.5, 5.5}}};
+      {"M2", {2.0, 2.2, 1.6, 3.8}}, {"M2.5", {2.5, 2.7, 2.0, 4.5}}, {"M3", {3.0, 3.2, 2.5, 5.5}}, {"M4", {4.0, 4.3, 3.3, 7.0}}};
   return t;
 }
 }  // namespace
@@ -28,11 +28,17 @@ bool visConnue(const std::string& nom) {
 }
 const Vis& vis(const std::string& nom) {
   for (const auto& [n, v] : tableVis()) if (n == nom) return v;
-  return tableVis().back().second;
+  return tableVis()[2].second;  // M3 par défaut
 }
 const std::vector<std::string>& nomsVis() {
-  static const std::vector<std::string> n = {"M2", "M2.5", "M3"};
+  static const std::vector<std::string> n = {"M2", "M2.5", "M3", "M4"};
   return n;
+}
+
+const Insert& insert(const std::string& nomVis) {
+  static const std::vector<std::pair<std::string, Insert>> t = {{"M2", {3.2, 4.0}}, {"M2.5", {3.6, 5.7}}, {"M3", {4.0, 5.7}}, {"M4", {5.6, 8.1}}};
+  for (const auto& [n, i] : t) if (n == nomVis) return i;
+  return t[2].second;
 }
 
 const std::vector<TypeComposant>& typesComposants() {
@@ -235,6 +241,13 @@ Projet normaliser(const Json& s) {
         o.x = nombre(champ(t, "x"), p.carte.x0);
         o.y = nombre(champ(t, "y"), p.carte.y0);
       }
+      const Json& ja = champ(t, "ancrage");
+      const std::string as = ja.is_string() ? ja.get<std::string>() : "";
+      if (as == "libre" || as == "NE" || as == "NW" || as == "SE" || as == "SW") o.ancrage = as;
+      const Json& jv = champ(t, "vis");
+      if (jv.is_string() && visConnue(jv.get<std::string>())) o.vis = jv.get<std::string>();
+      const Json& jf = champ(t, "fixation");
+      if (jf.is_string() && jf.get<std::string>() == "insert") o.fixation = "insert";
       p.trous.push_back(o);
     }
   }
@@ -275,6 +288,21 @@ Projet normaliser(const Json& s) {
         o.rot = parmi(r, {0, 90, 180, 270}) ? static_cast<int>(r) : 0;
       }
       if (T->couvercle > 0) o.trou_couvercle = borne(nombre(champ(k, "trou_couvercle"), T->couvercle), 0.5, 30);
+      const Json& ja = champ(k, "ancrage");
+      if (ja.is_string() && ancrageValide(o, ja.get<std::string>()) && ja.get<std::string>() != "libre") {
+        // Sans décalages enregistrés, on les déduit de la position absolue.
+        const bool decalages = champ(k, "ax").is_number();
+        const std::string a = ja.get<std::string>();
+        if (decalages) {
+          o.ancrage = a;
+          o.ax = borne(nombre(champ(k, "ax"), 0), -300, 300);
+          o.ay = borne(nombre(champ(k, "ay"), 0), -300, 300);
+        } else {
+          changerAncrage(p, o, a);
+        }
+      }
+      const Json& jverrou = champ(k, "verrou");
+      o.verrou = jverrou.is_boolean() && jverrou.get<bool>();
       p.composants.push_back(o);
     }
   }
@@ -297,6 +325,9 @@ Json versJson(const Projet& p) {
     Json o = {{"id", t.id}, {"ref", t.ref}};
     if (t.coin) { o["coin"] = *t.coin; o["ox"] = t.ox; o["oy"] = t.oy; }
     else { o["x"] = t.x; o["y"] = t.y; }
+    if (t.ancrage != "auto") o["ancrage"] = t.ancrage;
+    if (t.vis) o["vis"] = *t.vis;
+    if (t.fixation != "autotaraudeuse") o["fixation"] = t.fixation;
     j["trous"].push_back(o);
   }
   j["composants"] = Json::array();
@@ -304,14 +335,21 @@ Json versJson(const Projet& p) {
     Json o = {{"id", k.id}, {"ref", k.ref}, {"type", k.type}, {"valeur", k.valeur}, {"w", k.w}, {"d", k.d}, {"h", k.h}};
     if (k.bord) {
       o["bord"] = std::string(1, lettre(*k.bord));
-      o["le_long"] = k.le_long;
+      o["le_long"] = leLongComposant(p, k);
       o["ecart"] = k.ecart;
       o["decoupe"] = {{"w", k.decoupe.w}, {"h", k.decoupe.h}, {"r", k.decoupe.r}};
       o["zc"] = k.zc;
     } else {
-      o["x"] = k.x; o["y"] = k.y; o["rot"] = k.rot;
+      const Point q = posComposant(p, k);
+      o["x"] = q.x; o["y"] = q.y; o["rot"] = k.rot;
     }
     if (k.trou_couvercle) o["trou_couvercle"] = *k.trou_couvercle;
+    if (k.ancrage != "libre") {
+      o["ancrage"] = k.ancrage;
+      o["ax"] = k.ax;
+      if (!k.bord) o["ay"] = k.ay;
+    }
+    if (k.verrou) o["verrou"] = true;
     j["composants"].push_back(o);
   }
   return j;
@@ -387,6 +425,16 @@ Point posTrou(const Projet& p, const Trou& t) {
 
 void ancrerTrou(const Projet& p, Trou& t, double x, double y) {
   const auto& c = p.carte;
+  if (t.ancrage == "libre") {
+    t.coin.reset(); t.ox = 4; t.oy = 4; t.x = x; t.y = y;
+    return;
+  }
+  if (t.ancrage.size() == 2) {
+    const double sx = t.ancrage[1] == 'E' ? 1 : -1, sy = t.ancrage[0] == 'N' ? 1 : -1;
+    t.coin = t.ancrage;
+    t.ox = c.L / 2 - sx * (x - c.x0); t.oy = c.W / 2 - sy * (y - c.y0); t.x = 0; t.y = 0;
+    return;
+  }
   const double sx = x >= c.x0 ? 1 : -1, sy = y >= c.y0 ? 1 : -1;
   const double ox = c.L / 2 - sx * (x - c.x0), oy = c.W / 2 - sy * (y - c.y0);
   if (ox <= 15 && oy <= 15) {
@@ -410,6 +458,94 @@ void placerSurBord(const Projet& p, Composant& k, double x, double y) {
   const double centre = hz ? c.x0 : c.y0, demi = (hz ? c.L : c.W) / 2;
   const double lim = std::max(0.0, demi - k.w / 2 - c.r);
   k.le_long = borne(hz ? x : y, centre - lim, centre + lim);
+}
+
+void changerAncrageTrou(const Projet& p, Trou& t, const std::string& ancrage) {
+  const Point q = posTrou(p, t);
+  t.ancrage = ancrage;
+  ancrerTrou(p, t, q.x, q.y);
+}
+
+bool ancrageValide(const Composant& k, const std::string& a) {
+  if (k.bord) return a == "libre" || a == "debut" || a == "fin" || a == "milieu";
+  return a == "libre" || a == "centre" || a == "NE" || a == "NW" || a == "SE" || a == "SW";
+}
+
+Point posComposant(const Projet& p, const Composant& k) {
+  const auto& c = p.carte;
+  if (k.ancrage == "centre") return {c.x0 + k.ax, c.y0 + k.ay};
+  if (k.ancrage.size() == 2) {
+    const double sx = k.ancrage[1] == 'E' ? 1 : -1, sy = k.ancrage[0] == 'N' ? 1 : -1;
+    return {c.x0 + sx * (c.L / 2 - k.ax), c.y0 + sy * (c.W / 2 - k.ay)};
+  }
+  return {k.x, k.y};
+}
+
+namespace {
+void bornesBord(const Projet& p, const Composant& k, double& centre, double& demi) {
+  const bool hz = k.bord && horizontal(*k.bord);
+  centre = hz ? p.carte.x0 : p.carte.y0;
+  demi = (hz ? p.carte.L : p.carte.W) / 2;
+}
+void fixerLeLong(const Projet& p, Composant& k, double u) {
+  double centre, demi;
+  bornesBord(p, k, centre, demi);
+  if (k.ancrage == "debut") k.ax = u - (centre - demi);
+  else if (k.ancrage == "fin") k.ax = (centre + demi) - u;
+  else if (k.ancrage == "milieu") k.ax = u - centre;
+  k.le_long = u;
+}
+}  // namespace
+
+double leLongComposant(const Projet& p, const Composant& k) {
+  if (!k.bord) return 0;
+  double centre, demi;
+  bornesBord(p, k, centre, demi);
+  if (k.ancrage == "debut") return centre - demi + k.ax;
+  if (k.ancrage == "fin") return centre + demi - k.ax;
+  if (k.ancrage == "milieu") return centre + k.ax;
+  return k.le_long;
+}
+
+void placerLeLong(const Projet& p, Composant& k, double u) { fixerLeLong(p, k, u); }
+
+void placerComposant(const Projet& p, Composant& k, double x, double y) {
+  if (k.bord) {
+    placerSurBord(p, k, x, y);
+    fixerLeLong(p, k, k.le_long);
+    return;
+  }
+  const auto& c = p.carte;
+  if (k.ancrage == "centre") {
+    k.ax = x - c.x0; k.ay = y - c.y0;
+  } else if (k.ancrage.size() == 2) {
+    const double sx = k.ancrage[1] == 'E' ? 1 : -1, sy = k.ancrage[0] == 'N' ? 1 : -1;
+    k.ax = c.L / 2 - sx * (x - c.x0); k.ay = c.W / 2 - sy * (y - c.y0);
+  }
+  k.x = x; k.y = y;
+}
+
+void changerAncrage(const Projet& p, Composant& k, const std::string& ancrage) {
+  if (!ancrageValide(k, ancrage)) return;
+  if (k.bord) {
+    const double u = leLongComposant(p, k);
+    k.ancrage = ancrage;
+    fixerLeLong(p, k, u);
+  } else {
+    const Point q = posComposant(p, k);
+    k.ancrage = ancrage;
+    placerComposant(p, k, q.x, q.y);
+  }
+}
+
+void contraindreBords(Projet& p) {
+  for (auto& k : p.composants) {
+    if (!k.bord) continue;
+    double centre, demi;
+    bornesBord(p, k, centre, demi);
+    const double lim = std::max(0.0, demi - k.w / 2 - p.carte.r);
+    fixerLeLong(p, k, borne(leLongComposant(p, k), centre - lim, centre + lim));
+  }
 }
 
 int longueurVis(double t, const Vis& v) {

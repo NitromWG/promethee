@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(Promethee VERSION 0.1.0 LANGUAGES CXX
+project(Promethee VERSION 0.3.0 LANGUAGES CXX
         DESCRIPTION "Plateforme libre d'ingénierie intégrée : carte et boîtier dans un seul modèle")
 
 set(CMAKE_CXX_STANDARD 20)

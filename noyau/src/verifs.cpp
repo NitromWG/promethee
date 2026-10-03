@@ -93,10 +93,10 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
     }
   for (const auto& t : d.trous)
     for (const auto& g : d.comps)
-      if (distRectPoint(g, t.x, t.y) < d.rTete)
+      if (distRectPoint(g, t.x, t.y) < t.rTete)
         ajouter(E, "tete_vis", g.ref + " empiète sur la tête de vis du trou " + t.ref + ".", {g.id, t.id});
-  const double minBord = d.vis.trou / 2 + 1;
   for (const auto& t : d.trous) {
+    const double minBord = t.vis.trou / 2 + 1;
     const double bord = -sdCarte(t.x, t.y);
     if (bord < 0)
       ajouter(E, "trou_hors", "Le trou " + t.ref + " est hors de la carte.", {t.id}, Correction{"Ramener sur la carte", "trou", t.id, 0});
@@ -105,7 +105,7 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
               Correction{"Éloigner du bord", "trou", t.id, 0});
     else {
       const double paroi = -sdRR(t.x, t.y, d.cx, d.cy, d.Li / 2, d.Wi / 2, d.ri);
-      if (paroi < d.Rb + 0.3)
+      if (paroi < t.Rb + 0.3)
         ajouter(E, "pilier_paroi", "Le pilier du trou " + t.ref + " touche la paroi du boîtier.", {t.id}, Correction{"Éloigner de la paroi", "trou", t.id, 0});
     }
   }
@@ -113,7 +113,7 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
     for (size_t j = i + 1; j < d.trous.size(); ++j) {
       const auto& a = d.trous[i];
       const auto& e = d.trous[j];
-      if (std::hypot(a.x - e.x, a.y - e.y) < 2 * d.Rb + 0.4)
+      if (std::hypot(a.x - e.x, a.y - e.y) < a.Rb + e.Rb + 0.4)
         ajouter(E, "piliers", "Les piliers des trous " + a.ref + " et " + e.ref + " se touchent.", {a.id, e.id});
     }
   for (const auto& g : d.comps) {
@@ -151,11 +151,25 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
   if (b.entretoise < 2)
     ajouter(A, "entretoise", "Entretoises de " + fmt(b.entretoise) + " mm : les pattes des composants traversants risquent de toucher le fond (2 mm conseillé).", {},
             Correction{"Passer à 2 mm", "entretoise", "", 2});
-  const double depasse = d.longVis - c.t - (b.entretoise - 0.5);
-  if (!p.trous.empty() && depasse > 0.01) {
-    const double v2 = std::ceil((d.longVis - c.t + 0.5) * 2) / 2;
-    ajouter(A, "vis_longue", "Les vis " + b.vis + " × " + std::to_string(d.longVis) + " toucheront le fond : entretoises de " + fmt(b.entretoise) + " mm trop courtes.", {},
-            Correction{"Entretoises de " + fmt(v2) + " mm", "entretoise", "", v2});
+  // Une alerte par taille de vis autotaraudeuse dont la pointe atteindrait le fond.
+  std::vector<std::string> tailles;
+  for (const auto& t : d.trous)
+    if (!t.insert && std::find(tailles.begin(), tailles.end(), t.nomVis) == tailles.end()) tailles.push_back(t.nomVis);
+  for (const auto& nom : tailles) {
+    const int lv = longueurVis(c.t, vis(nom));
+    const double depasse = lv - c.t - (b.entretoise - 0.5);
+    if (depasse > 0.01) {
+      const double v2 = std::ceil((lv - c.t + 0.5) * 2) / 2;
+      ajouter(A, "vis_longue", "Les vis " + nom + " × " + std::to_string(lv) + " toucheront le fond : entretoises de " + fmt(b.entretoise) + " mm trop courtes.", {},
+              Correction{"Entretoises de " + fmt(v2) + " mm", "entretoise", "", v2});
+    }
+  }
+  // Inserts laiton : le pilier doit être plus haut que l'insert.
+  for (const auto& t : d.trous) {
+    if (!t.insert || t.longInsert <= b.entretoise - 0.5) continue;
+    const double v2 = std::ceil((t.longInsert + 0.5) * 2) / 2;
+    ajouter(A, "insert_long", "Le pilier du trou " + t.ref + " est trop court pour un insert " + t.nomVis + " de " + fmt(t.longInsert) + " mm (entretoises de " + fmt(b.entretoise) + " mm).",
+            {t.id}, Correction{"Entretoises de " + fmt(v2) + " mm", "entretoise", "", v2});
   }
   return pb;
 }
@@ -170,7 +184,9 @@ void repousserTrou(Projet& p, const std::string& id) {
     const Point q = posTrou(p, *t);
     const double bord = -sdRR(q.x, q.y, c.x0, c.y0, c.L / 2, c.W / 2, c.r);
     const double paroi = -sdRR(q.x, q.y, d.cx, d.cy, d.Li / 2, d.Wi / 2, d.ri);
-    if (bord >= d.vis.trou / 2 + 1 && paroi >= d.Rb + 0.3) break;
+    double rTrou = d.vis.trou / 2, Rb = d.Rb;
+    for (const auto& tp : d.trous) if (tp.id == id) { rTrou = tp.vis.trou / 2; Rb = tp.Rb; }
+    if (bord >= rTrou + 1 && paroi >= Rb + 0.3) break;
     const double dx = c.x0 - q.x, dy = c.y0 - q.y;
     const double fx = std::abs(q.x - c.x0) > c.L / 2 - 6 ? signe(dx) : 0;
     const double fy = std::abs(q.y - c.y0) > c.W / 2 - 6 ? signe(dy) : 0;

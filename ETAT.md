@@ -4,13 +4,13 @@ Mis à jour le 2 octobre 2026. Ce fichier est la mémoire du projet : chaque ses
 
 ## Où on en est
 
-Lot 0.B terminé le 2 octobre 2026 (socle natif au vert sur Linux, Windows et macOS). Lot 0.C en cours : la première version de l'application de bureau est écrite et vérifiée sous Linux, et la CI la construit sur les trois systèmes avec un paquet Windows prêt à lancer.
+Lot 0.C, version 0.3 : l'application de bureau intègre les retours du premier essai sous Windows. Chaque trou a sa vis (M2 à M4) et son montage (vis autotaraudeuse ou insert laiton posé à chaud), et peut suivre le coin le plus proche, un coin imposé ou rester à sa place. Chaque composant a un ancrage (rester à sa place, suivre un coin, le centre, ou une extrémité du bord pour les connecteurs) et peut être verrouillé ; la vue Carte dessine en pointillés cuivre la contrainte de l'élément sélectionné. La vue 3D a un cube de vue cliquable, des vues normalisées animées et des surfaces plus lisses. L'export propose douze formats (STEP, IGES, BREP, STL binaire et texte, 3MF, OBJ, PLY, DXF, SVG, CSV, projet). L'interface a un thème clair cohérent, quel que soit le thème de Windows.
 
 Le logiciel sait aujourd'hui lire un projet (même format que le prototype web), dériver tout le boîtier de la carte, vérifier 28 règles de conception avec les mêmes messages que le prototype, appliquer les corrections automatiques, construire le corps et le couvercle en solides exacts OpenCascade, et les exporter en STEP (noms et couleurs) et en STL posés sur le plateau. Tout est accessible par l'outil `promethee` en ligne de commande et par l'application de bureau `Promethee` : vue Carte (glisser les composants, les trous et les bords de la carte), vue Boîtier en 3D OpenCascade qui suit en direct (couvercle ouvert, fermé ou éclaté), panneau de propriétés, vérifications avec corrections en un clic, nomenclature, annuler et rétablir, ouverture et enregistrement des `.prom.json`, export du dossier de fabrication (STEP avec la carte, STL).
 
 | Indicateur | Valeur |
 | --- | --- |
-| Tests | 21 sur 21, dont 6 comparaisons cas par cas avec le prototype (placement automatique compris) |
+| Tests | 29 sur 29, dont 6 comparaisons cas par cas avec le prototype et 8 essais des fonctions de la version 0.3 |
 | Écart de volume avec le prototype | moins de 0,3 % (pièces exactes contre maillage fin) |
 | Compilation automatique | Linux (OpenCascade 7.6), Windows (MSVC, OpenCascade 8 par vcpkg), macOS (OpenCascade 8 par Homebrew), toutes au vert |
 | Avertissements du compilateur | aucun (-Wall -Wextra -Wpedantic) |
@@ -20,11 +20,13 @@ Le logiciel sait aujourd'hui lire un projet (même format que le prototype web),
 - [ADR 0001](docs/adr/0001-socle-technique.md) : C++20, CMake, OpenCascade, Qt 6, format `.prom.json` commun avec le prototype.
 - [ADR 0002](docs/adr/0002-integration-kicad-freecad.md) : en phase 1, intégration avec KiCad et FreeCAD par les formats de fichiers, sans fusionner leurs codes.
 
-## Rendez-vous en cours (lot 0.C, première version)
+## Rendez-vous en cours (version 0.3)
 
-Envoyer le contenu du zip sur le dépôt (glisser-déposer sur la page d'envoi de GitHub), Claude met à jour le fichier de CI et le `.gitignore` dans l'éditeur de GitHub. Puis, dans l'onglet Actions, télécharger le paquet `Promethee-Windows` de la dernière compilation au vert, le décompresser, lancer `Promethee.exe`, et refaire le geste du jalon 0 : déplacer un trou, tirer un bord de la carte, ajouter une LED, agrandir un condensateur.
+Envoyer le contenu du zip sur le dépôt, puis essayer le nouveau paquet Windows : régler la vis et l'insert d'un trou, ancrer un composant à un coin puis agrandir la carte, verrouiller un composant, utiliser le cube de vue, exporter dans plusieurs formats et ouvrir le STEP dans Inventor et le 3MF dans un trancheur.
 
-À rapporter : ce qui ne marche pas, ce qui surprend, ce qui manque par rapport à un logiciel de CAO habituel.
+## Retours du premier essai (version 0.2, 2 octobre 2026)
+
+Ce qui marche : ajouter un trou, agrandir la carte par les poignées ou les valeurs avec le reste qui suit, changer la hauteur d'un composant, naviguer en 3D, exporter. Ce qui manquait et a été traité en 0.3 : réglages des trous, contraintes pour choisir ce qui suit la carte et ce qui reste fixe, rotation 3D et surfaces moins lisses que SolidWorks, choix des formats d'export, interface peu soignée. Ce qui reste demandé : de vraies contraintes entre éléments (lot 1.B), beaucoup plus de fonctions de CAO.
 
 ## Dernier rendez-vous (lot 0.B)
 

@@ -19,6 +19,10 @@ const Vis& vis(const std::string& nom);              // "M2", "M2.5", "M3"
 bool visConnue(const std::string& nom);
 const std::vector<std::string>& nomsVis();
 
+// Insert laiton posé à chaud dans un pilier imprimé : diamètre de perçage et longueur.
+struct Insert { double trou, longueur; };
+const Insert& insert(const std::string& nomVis);
+
 struct Levre {
   static constexpr double jeu = 0.25;  // jeu entre lèvre du couvercle et paroi
   static constexpr double ep = 1.2;    // épaisseur de la lèvre
@@ -63,6 +67,9 @@ struct Trou {
   std::optional<std::string> coin;  // "NE", "NW", "SE", "SW" : suit ce coin de la carte
   double ox = 4, oy = 4;            // distances au coin (trou ancré)
   double x = 0, y = 0;              // position libre (trou non ancré)
+  std::string ancrage = "auto";     // "auto" (coin le plus proche à moins de 15 mm), "libre", ou un coin imposé
+  std::optional<std::string> vis;   // vis propre à ce trou ; sinon celle du projet
+  std::string fixation = "autotaraudeuse";  // ou "insert" (insert laiton posé à chaud)
 };
 
 struct Composant {
@@ -74,6 +81,12 @@ struct Composant {
   double le_long = 0, ecart = 0.4, zc = 0;
   Decoupe decoupe{};
   std::optional<double> trou_couvercle;
+  // Contrainte de position quand la carte change de taille.
+  // Composant libre : "libre", "NE", "NW", "SE", "SW" (suit ce coin), "centre" (suit le centre).
+  // Connecteur de bord : "libre", "debut", "fin" (suit une extrémité du bord), "milieu".
+  std::string ancrage = "libre";
+  double ax = 0, ay = 0;            // décalages d'ancrage
+  bool verrou = false;              // ne se déplace pas à la souris ni au clavier
 };
 
 struct Projet {
@@ -97,6 +110,15 @@ struct Point { double x, y; };
 Point posTrou(const Projet& p, const Trou& t);
 void ancrerTrou(const Projet& p, Trou& t, double x, double y);  // ancre au coin le plus proche si à moins de 15 mm
 void placerSurBord(const Projet& p, Composant& k, double x, double y);
+void changerAncrageTrou(const Projet& p, Trou& t, const std::string& ancrage);  // garde la position actuelle
+// Position d'un composant selon son ancrage, et placement qui respecte cet ancrage.
+Point posComposant(const Projet& p, const Composant& k);
+double leLongComposant(const Projet& p, const Composant& k);
+void placerLeLong(const Projet& p, Composant& k, double u);  // position le long du bord, selon l'ancrage
+void placerComposant(const Projet& p, Composant& k, double x, double y);
+void changerAncrage(const Projet& p, Composant& k, const std::string& ancrage);  // garde la position actuelle
+void contraindreBords(Projet& p);  // ramène les connecteurs de bord sur la longueur du bord
+bool ancrageValide(const Composant& k, const std::string& ancrage);
 int longueurVis(double epaisseurCarte, const Vis& v);
 // Distance signée d'un point à un rectangle arrondi (négative à l'intérieur).
 double sdRR(double px, double py, double cx, double cy, double hx, double hy, double r);

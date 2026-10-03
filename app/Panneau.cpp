@@ -21,6 +21,7 @@
 #include <QVBoxLayout>
 
 #include "promethee/derive.hpp"
+#include "promethee/nomenclature.hpp"
 
 using namespace prom;
 
@@ -149,7 +150,7 @@ void Panneau::texte(QFormLayout* f, const QString& libelle, std::function<std::s
 void Panneau::lecture(QVBoxLayout* colonne, std::function<QString()> lire) {
   auto* l = new QLabel(lire());
   l->setWordWrap(true);
-  l->setStyleSheet(QStringLiteral("color: palette(mid); padding: 2px 4px;"));
+  l->setStyleSheet(QStringLiteral("color: #56645D; padding: 2px 4px;"));
   colonne->addWidget(l);
   m_synchros.push_back([l, lire] { l->setText(lire()); });
 }
@@ -179,6 +180,7 @@ void Panneau::construireProprietes() {
     texte(f, QStringLiteral("Repère"), [K] { return K().ref; }, [id](Projet& p, const std::string& v) { if (auto* k = trouverComposant(p, id)) k->ref = v.substr(0, 12); });
     texte(f, QStringLiteral("Valeur"), [K] { return K().valeur; }, [id](Projet& p, const std::string& v) { if (auto* k = trouverComposant(p, id)) k->valeur = v.substr(0, 60); });
     f = groupe(colonne, QStringLiteral("Position (depuis le coin inférieur gauche de la carte)"));
+    std::vector<QWidget*> champsPosition;
     auto ox = [doc] { return doc->projet().carte.x0 - doc->projet().carte.L / 2; };
     auto oy = [doc] { return doc->projet().carte.y0 - doc->projet().carte.W / 2; };
     if (T.bord) {
@@ -195,19 +197,24 @@ void Panneau::construireProprietes() {
           if (!k || !b || k->bord == b) return;
           const bool change = horizontal(*k->bord) != horizontal(*b);
           k->bord = b;
-          if (change) k->le_long = horizontal(*b) ? p.carte.x0 : p.carte.y0;
+          if (change) placerLeLong(p, *k, horizontal(*b) ? p.carte.x0 : p.carte.y0);
+          contraindreBords(p);
         });
       });
       m_synchros.push_back([bord, K] { const QSignalBlocker b(bord); if (K().bord) bord->setCurrentIndex(bord->findData(QString(QChar(lettre(*K().bord))))); });
       f->addRow(QStringLiteral("Bord"), bord);
-      nombre(f, QStringLiteral("Le long du bord"), -500, 500, [K, ox, oy] { return K().le_long - (K().bord && horizontal(*K().bord) ? ox() : oy()); },
+      champsPosition.push_back(nombre(f, QStringLiteral("Le long du bord"), -500, 500, [doc, K, ox, oy] { return leLongComposant(doc->projet(), K()) - (K().bord && horizontal(*K().bord) ? ox() : oy()); },
              [id](Projet& p, double v) {
-               if (auto* k = trouverComposant(p, id)) k->le_long = v + (horizontal(*k->bord) ? p.carte.x0 - p.carte.L / 2 : p.carte.y0 - p.carte.W / 2);
-             });
-      nombre(f, QStringLiteral("Écart à la paroi"), 0, 10, [K] { return K().ecart; }, [id](Projet& p, double v) { if (auto* k = trouverComposant(p, id)) k->ecart = v; });
+               if (auto* k = trouverComposant(p, id)) placerLeLong(p, *k, v + (horizontal(*k->bord) ? p.carte.x0 - p.carte.L / 2 : p.carte.y0 - p.carte.W / 2));
+               contraindreBords(p);
+             }));
+      champsPosition.push_back(nombre(f, QStringLiteral("Écart à la paroi"), 0, 10, [K] { return K().ecart; }, [id](Projet& p, double v) { if (auto* k = trouverComposant(p, id)) k->ecart = v; }));
+      champsPosition.push_back(bord);
     } else {
-      nombre(f, QStringLiteral("X"), -500, 500, [K, ox] { return K().x - ox(); }, [id](Projet& p, double v) { if (auto* k = trouverComposant(p, id)) k->x = v + p.carte.x0 - p.carte.L / 2; });
-      nombre(f, QStringLiteral("Y"), -500, 500, [K, oy] { return K().y - oy(); }, [id](Projet& p, double v) { if (auto* k = trouverComposant(p, id)) k->y = v + p.carte.y0 - p.carte.W / 2; });
+      champsPosition.push_back(nombre(f, QStringLiteral("X"), -500, 500, [doc, K, ox] { return posComposant(doc->projet(), K()).x - ox(); },
+             [id](Projet& p, double v) { if (auto* k = trouverComposant(p, id)) placerComposant(p, *k, v + p.carte.x0 - p.carte.L / 2, posComposant(p, *k).y); }));
+      champsPosition.push_back(nombre(f, QStringLiteral("Y"), -500, 500, [doc, K, oy] { return posComposant(doc->projet(), K()).y - oy(); },
+             [id](Projet& p, double v) { if (auto* k = trouverComposant(p, id)) placerComposant(p, *k, posComposant(p, *k).x, v + p.carte.y0 - p.carte.W / 2); }));
       auto* rot = new QComboBox;
       for (int r : {0, 90, 180, 270}) rot->addItem(QString::number(r) + QStringLiteral("°"), r);
       rot->setCurrentIndex(rot->findData(k0->rot));
@@ -217,7 +224,43 @@ void Panneau::construireProprietes() {
       });
       m_synchros.push_back([rot, K] { const QSignalBlocker b(rot); rot->setCurrentIndex(rot->findData(K().rot)); });
       f->addRow(QStringLiteral("Rotation"), rot);
+      champsPosition.push_back(rot);
     }
+    f = groupe(colonne, QStringLiteral("Contrainte quand la carte change de taille"));
+    auto* ancrage = new QComboBox;
+    const std::vector<std::pair<const char*, QString>> choix = T.bord
+        ? std::vector<std::pair<const char*, QString>>{{"libre", QStringLiteral("Reste à sa place")}, {"debut", QStringLiteral("Suit le début du bord")},
+                                                        {"fin", QStringLiteral("Suit la fin du bord")}, {"milieu", QStringLiteral("Suit le milieu du bord")}}
+        : std::vector<std::pair<const char*, QString>>{{"libre", QStringLiteral("Reste à sa place")}, {"NW", QStringLiteral("Suit le coin haut gauche")},
+                                                        {"NE", QStringLiteral("Suit le coin haut droit")}, {"SW", QStringLiteral("Suit le coin bas gauche")},
+                                                        {"SE", QStringLiteral("Suit le coin bas droit")}, {"centre", QStringLiteral("Suit le centre de la carte")}};
+    for (const auto& [cle, texte] : choix) ancrage->addItem(texte, QString::fromLatin1(cle));
+    ancrage->setCurrentIndex(ancrage->findData(qs(k0->ancrage)));
+    connect(ancrage, &QComboBox::currentIndexChanged, this, [this, ancrage, id] {
+      const std::string a = ancrage->currentData().toString().toStdString();
+      m_doc->modifier([&](Projet& p) { if (auto* k = trouverComposant(p, id)) changerAncrage(p, *k, a); });
+    });
+    m_synchros.push_back([ancrage, K] { const QSignalBlocker b(ancrage); ancrage->setCurrentIndex(ancrage->findData(qs(K().ancrage))); });
+    f->addRow(QStringLiteral("Ancrage"), ancrage);
+    auto* verrou = new QCheckBox(QStringLiteral("Verrouiller la position"));
+    verrou->setChecked(k0->verrou);
+    connect(verrou, &QCheckBox::toggled, this, [this, id](bool on) { m_doc->modifier([&](Projet& p) { if (auto* k = trouverComposant(p, id)) k->verrou = on; }); });
+    m_synchros.push_back([verrou, K, champsPosition, ancrage] {
+      const QSignalBlocker b(verrou);
+      verrou->setChecked(K().verrou);
+      for (QWidget* w : champsPosition) w->setEnabled(!K().verrou);
+      ancrage->setEnabled(!K().verrou);
+    });
+    f->addRow(QString(), verrou);
+    lecture(colonne, [doc, K] {
+      const Composant& k = K();
+      const Projet& p = doc->projet();
+      if (k.verrou) return QStringLiteral("Position verrouillée : le composant ne bouge ni à la souris ni au clavier.");
+      if (k.ancrage == "libre") return QStringLiteral("Reste à sa place quand la carte change de taille.");
+      if (k.ancrage == "centre") return QStringLiteral("Reste à %1 et %2 du centre de la carte.").arg(mm(k.ax), mm(k.ay));
+      if (k.bord) return QStringLiteral("Reste à %1 de son repère sur le bord (%2).").arg(mm(std::abs(k.ax)), mm(leLongComposant(p, k)));
+      return QStringLiteral("Reste à %1 et %2 du coin.").arg(mm(k.ax), mm(k.ay));
+    });
     f = groupe(colonne, QStringLiteral("Dimensions"));
     nombre(f, T.bord ? QStringLiteral("Largeur") : QStringLiteral("Longueur"), 0.5, 150, [K] { return K().w; }, [id](Projet& p, double v) { if (auto* k = trouverComposant(p, id)) k->w = v; });
     nombre(f, T.bord ? QStringLiteral("Profondeur") : QStringLiteral("Largeur"), 0.5, 150, [K] { return K().d; }, [id](Projet& p, double v) { if (auto* k = trouverComposant(p, id)) k->d = v; });
@@ -258,14 +301,55 @@ void Panneau::construireProprietes() {
            [id, pos](Projet& p, double v) { for (auto& t : p.trous) if (t.id == id) ancrerTrou(p, t, v + p.carte.x0 - p.carte.L / 2, pos().y()); });
     nombre(f, QStringLiteral("Y"), -500, 500, [doc, pos] { return pos().y() - (doc->projet().carte.y0 - doc->projet().carte.W / 2); },
            [id, pos](Projet& p, double v) { for (auto& t : p.trous) if (t.id == id) ancrerTrou(p, t, pos().x(), v + p.carte.y0 - p.carte.W / 2); });
-    lecture(colonne, [doc, id] {
-      for (const auto& t : doc->projet().trous)
-        if (t.id == id) return t.coin ? QStringLiteral("Suit le coin %1 de la carte quand elle change de taille.").arg(qs(*t.coin)) : QStringLiteral("Position libre sur la carte.");
-      return QString();
+    auto Tm = [doc, id]() -> const Trou& { static Trou vide; for (const auto& t : doc->projet().trous) if (t.id == id) return t; return vide; };
+    auto TP = [doc, id]() -> const TrouPlace& { static TrouPlace vide; for (const auto& t : doc->derive().trous) if (t.id == id) return t; return vide; };
+    auto modifierTrou = [this, id](const std::function<void(Projet&, Trou&)>& fn) {
+      m_doc->modifier([&](Projet& p) { for (auto& t : p.trous) if (t.id == id) fn(p, t); });
+    };
+    auto* ancrage = new QComboBox;
+    for (const auto& [cle, texte] : {std::pair{"auto", QStringLiteral("Coin le plus proche (à moins de 15 mm)")}, std::pair{"libre", QStringLiteral("Reste à sa place")},
+                                     std::pair{"NW", QStringLiteral("Suit le coin haut gauche")}, std::pair{"NE", QStringLiteral("Suit le coin haut droit")},
+                                     std::pair{"SW", QStringLiteral("Suit le coin bas gauche")}, std::pair{"SE", QStringLiteral("Suit le coin bas droit")}})
+      ancrage->addItem(texte, QString::fromLatin1(cle));
+    ancrage->setCurrentIndex(ancrage->findData(qs(t0->ancrage)));
+    connect(ancrage, &QComboBox::currentIndexChanged, this, [ancrage, modifierTrou] {
+      const std::string a = ancrage->currentData().toString().toStdString();
+      modifierTrou([&](Projet& p, Trou& t) { changerAncrageTrou(p, t, a); });
     });
-    lecture(colonne, [doc] {
-      const Derive& d = doc->derive();
-      return QStringLiteral("Pilier de Ø %1 avec avant-trou de Ø %2 pour une vis %3 × %4.").arg(mm(2 * d.Rb), mm(d.vis.avant), qs(doc->projet().boitier.vis)).arg(d.longVis);
+    m_synchros.push_back([ancrage, Tm] { const QSignalBlocker b(ancrage); ancrage->setCurrentIndex(ancrage->findData(qs(Tm().ancrage))); });
+    f->addRow(QStringLiteral("Ancrage"), ancrage);
+    lecture(colonne, [Tm] {
+      const Trou& t = Tm();
+      return t.coin ? QStringLiteral("Suit le coin %1 : reste à %2 et %3 de lui quand la carte change de taille.").arg(qs(*t.coin), mm(t.ox), mm(t.oy))
+                    : QStringLiteral("Reste à sa place quand la carte change de taille.");
+    });
+    f = groupe(colonne, QStringLiteral("Fixation"));
+    auto* visTrou = new QComboBox;
+    visTrou->addItem(QStringLiteral("Celle du projet (%1)").arg(qs(doc->projet().boitier.vis)), QString());
+    for (const auto& n : nomsVis()) visTrou->addItem(qs(n), qs(n));
+    visTrou->setCurrentIndex(t0->vis ? visTrou->findData(qs(*t0->vis)) : 0);
+    connect(visTrou, &QComboBox::currentIndexChanged, this, [visTrou, modifierTrou] {
+      const QString v = visTrou->currentData().toString();
+      modifierTrou([&](Projet&, Trou& t) { if (v.isEmpty()) t.vis.reset(); else t.vis = v.toStdString(); });
+    });
+    m_synchros.push_back([visTrou, Tm] { const QSignalBlocker b(visTrou); visTrou->setCurrentIndex(Tm().vis ? visTrou->findData(qs(*Tm().vis)) : 0); });
+    f->addRow(QStringLiteral("Vis"), visTrou);
+    auto* fixation = new QComboBox;
+    fixation->addItem(QStringLiteral("Vis autotaraudeuse dans le pilier"), "autotaraudeuse");
+    fixation->addItem(QStringLiteral("Insert laiton posé à chaud"), "insert");
+    fixation->setCurrentIndex(fixation->findData(qs(t0->fixation)));
+    connect(fixation, &QComboBox::currentIndexChanged, this, [fixation, modifierTrou] {
+      const std::string v = fixation->currentData().toString().toStdString();
+      modifierTrou([&](Projet&, Trou& t) { t.fixation = v; });
+    });
+    m_synchros.push_back([fixation, Tm] { const QSignalBlocker b(fixation); fixation->setCurrentIndex(fixation->findData(qs(Tm().fixation))); });
+    f->addRow(QStringLiteral("Montage"), fixation);
+    lecture(colonne, [doc, TP] {
+      const TrouPlace& t = TP();
+      const QString base = QStringLiteral("Trou de Ø %1 dans la carte, pastille de Ø %2. Pilier de Ø %3 × %4")
+                               .arg(mm(t.vis.trou), mm(t.vis.tete), mm(2 * t.Rb), mm(doc->projet().boitier.entretoise));
+      if (t.insert) return base + QStringLiteral(" avec logement de Ø %1 pour un insert %2 de %3, vis %2 × %4.").arg(mm(2 * t.rp), qs(t.nomVis), mm(t.longInsert)).arg(t.longVis);
+      return base + QStringLiteral(" avec avant-trou de Ø %1 pour une vis %2 × %3.").arg(mm(2 * t.rp), qs(t.nomVis)).arg(t.longVis);
     });
     auto* supprimer = new QPushButton(QStringLiteral("Supprimer %1").arg(qs(t0->ref)));
     connect(supprimer, &QPushButton::clicked, this, [this, id] {
@@ -357,27 +441,15 @@ void Panneau::majVerifications() {
 }
 
 void Panneau::majNomenclature() {
-  const Projet& p = m_doc->projet();
-  const Derive& d = m_doc->derive();
-  struct Ligne { QString groupe, ref, designation; int qte; };
-  std::vector<Ligne> lignes;
-  std::vector<const Composant*> comps;
-  for (const auto& k : p.composants) comps.push_back(&k);
-  std::sort(comps.begin(), comps.end(), [](const Composant* a, const Composant* b) { return a->ref < b->ref; });
-  for (const auto* k : comps) lignes.push_back({QStringLiteral("Électronique"), qs(k->ref), qs(typeComposant(k->type)->nom) + QStringLiteral(", ") + qs(k->valeur), 1});
-  lignes.push_back({QStringLiteral("Pièces fabriquées"), QStringLiteral("PCB1"), QStringLiteral("Carte %1 × %2, épaisseur %3").arg(mm(p.carte.L), mm(p.carte.W), mm(p.carte.t)), 1});
-  lignes.push_back({QStringLiteral("Pièces fabriquées"), QStringLiteral("B1"), QStringLiteral("Boîtier %1 × %2 × %3, impression 3D").arg(mm(d.Lo), mm(d.Wo), mm(d.zt)), 1});
-  lignes.push_back({QStringLiteral("Pièces fabriquées"), QStringLiteral("B2"), QStringLiteral("Couvercle %1 × %2, impression 3D").arg(mm(d.Lo), mm(d.Wo)), 1});
-  if (!p.trous.empty())
-    lignes.push_back({QStringLiteral("Visserie"), QStringLiteral("V1"), QStringLiteral("Vis autotaraudeuse %1 × %2").arg(qs(p.boitier.vis)).arg(d.longVis), static_cast<int>(p.trous.size())});
+  const auto lignes = nomenclature(m_doc->projet(), m_doc->derive());
   m_nomen->setRowCount(0);
-  QString groupe;
+  std::string groupe;
   for (const auto& l : lignes) {
     if (l.groupe != groupe) {
       groupe = l.groupe;
       const int r = m_nomen->rowCount();
       m_nomen->insertRow(r);
-      auto* titre = new QTableWidgetItem(groupe);
+      auto* titre = new QTableWidgetItem(qs(groupe));
       QFont f = titre->font();
       f.setBold(true);
       titre->setFont(f);
@@ -386,8 +458,10 @@ void Panneau::majNomenclature() {
     }
     const int r = m_nomen->rowCount();
     m_nomen->insertRow(r);
-    m_nomen->setItem(r, 0, new QTableWidgetItem(l.ref));
-    m_nomen->setItem(r, 1, new QTableWidgetItem(l.designation));
+    m_nomen->setItem(r, 0, new QTableWidgetItem(qs(l.ref)));
+    auto* des = new QTableWidgetItem(qs(l.designation));
+    des->setToolTip(qs(l.appro));
+    m_nomen->setItem(r, 1, des);
     auto* q = new QTableWidgetItem(QString::number(l.qte));
     q->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     m_nomen->setItem(r, 2, q);

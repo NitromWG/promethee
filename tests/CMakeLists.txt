@@ -1,5 +1,5 @@
 find_package(Catch2 3 REQUIRED)
-add_executable(promethee_tests test_noyau.cpp test_reference.cpp test_geometrie.cpp)
+add_executable(promethee_tests test_noyau.cpp test_reference.cpp test_geometrie.cpp test_fixations_ancrages.cpp)
 target_link_libraries(promethee_tests PRIVATE Promethee::noyau Promethee::geometrie Catch2::Catch2WithMain)
 target_compile_definitions(promethee_tests PRIVATE PROMETHEE_DONNEES="${CMAKE_CURRENT_SOURCE_DIR}/donnees")
 if(WIN32)

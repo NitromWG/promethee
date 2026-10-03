@@ -31,16 +31,6 @@ QColor couleurLed(const std::string& valeur) {
   return QColor(0xD2, 0x3A, 0x2C);
 }
 
-void contraindreBords(Projet& p) {
-  const auto& c = p.carte;
-  for (auto& k : p.composants) {
-    if (!k.bord) continue;
-    const bool hz = horizontal(*k.bord);
-    const double centre = hz ? c.x0 : c.y0, demi = (hz ? c.L : c.W) / 2, lim = std::max(0.0, demi - k.w / 2 - c.r);
-    k.le_long = borne(k.le_long, centre - lim, centre + lim);
-  }
-}
-
 double magnetiser(double v) { return std::round(v * 2) / 2; }
 }  // namespace
 
@@ -147,7 +137,7 @@ void VueCarte::paintEvent(QPaintEvent*) {
   }
   g.setPen(QPen(TRAIT, 1));
   g.setBrush(PAROI);
-  for (const auto& t : d.trous) g.drawPath(cercle(t.x, t.y, d.Rb));
+  for (const auto& t : d.trous) g.drawPath(cercle(t.x, t.y, t.Rb));
 
   // Carte
   g.setPen(QPen(MASQUE_BORD, 1.2));
@@ -155,7 +145,7 @@ void VueCarte::paintEvent(QPaintEvent*) {
   g.drawPath(rr(c.x0, c.y0, c.L / 2, c.W / 2, c.r));
   g.setPen(QPen(QColor(244, 241, 230, 130), 1, Qt::DashLine));
   g.setBrush(Qt::NoBrush);
-  for (const auto& t : d.trous) g.drawPath(cercle(t.x, t.y, d.Rb));
+  for (const auto& t : d.trous) g.drawPath(cercle(t.x, t.y, t.Rb));
 
   // Composants
   for (const auto& gc : d.comps) {
@@ -228,11 +218,11 @@ void VueCarte::paintEvent(QPaintEvent*) {
   for (const auto& t : d.trous) {
     g.setPen(Qt::NoPen);
     g.setBrush(PASTILLE);
-    g.drawPath(cercle(t.x, t.y, d.vis.tete / 2));
+    g.drawPath(cercle(t.x, t.y, t.vis.tete / 2));
     g.setBrush(PAROI);
-    g.drawPath(cercle(t.x, t.y, d.vis.trou / 2));
+    g.drawPath(cercle(t.x, t.y, t.vis.trou / 2));
     g.setBrush(QColor(0, 0, 0, 107));
-    g.drawPath(cercle(t.x, t.y, d.rp));
+    g.drawPath(cercle(t.x, t.y, t.rp));
   }
 
   // Perçages du couvercle
@@ -256,7 +246,7 @@ void VueCarte::paintEvent(QPaintEvent*) {
     for (const auto& gc : d.comps)
       if (gc.id == id) { g.drawRect(QRectF(ecran(gc.x1, gc.y2), ecran(gc.x2, gc.y1)).adjusted(-2, -2, 2, 2)); trouve = true; }
     if (!trouve)
-      for (const auto& t : d.trous) if (t.id == id) g.drawPath(cercle(t.x, t.y, d.Rb + 1.5 / m_s));
+      for (const auto& t : d.trous) if (t.id == id) g.drawPath(cercle(t.x, t.y, t.Rb + 1.5 / m_s));
   }
 
   // Cotes de la carte et du boîtier
@@ -308,7 +298,7 @@ void VueCarte::paintEvent(QPaintEvent*) {
     if (cb.type == Cible::Composant) {
       for (const auto& gc : d.comps) if (gc.id == cb.id) g.drawRect(QRectF(ecran(gc.x1, gc.y2), ecran(gc.x2, gc.y1)).adjusted(-3, -3, 3, 3));
     } else if (cb.type == Cible::Trou) {
-      for (const auto& t : d.trous) if (t.id == cb.id) g.drawPath(cercle(t.x, t.y, d.Rb + 2.5 / m_s));
+      for (const auto& t : d.trous) if (t.id == cb.id) g.drawPath(cercle(t.x, t.y, t.Rb + 2.5 / m_s));
     } else if (cb.type == Cible::Carte) {
       g.drawPath(rr(c.x0, c.y0, c.L / 2 + 2.5 / m_s, c.W / 2 + 2.5 / m_s, c.r + 2.5 / m_s));
     }
@@ -316,6 +306,63 @@ void VueCarte::paintEvent(QPaintEvent*) {
   if (m_survol.type == Touche::Composant && m_survol.id != sel.id) contour({Cible::Composant, m_survol.id}, false);
   if (m_survol.type == Touche::Trou && m_survol.id != sel.id) contour({Cible::Trou, m_survol.id}, false);
   contour(sel, true);
+  // Contraintes : lignes de rappel entre l'élément sélectionné et son repère d'ancrage.
+  auto rappel = [&](QPointF a, QPointF b, const QString& texte) {
+    g.setPen(QPen(CUIVRE, 1.2, Qt::DashLine));
+    g.drawLine(a, b);
+    if (texte.isEmpty()) return;
+    QFont f = font();
+    f.setPixelSize(11);
+    f.setBold(true);
+    g.setFont(f);
+    const QRectF r(QPointF((a.x() + b.x()) / 2 - 28, (a.y() + b.y()) / 2 - 9), QSizeF(56, 16));
+    g.fillRect(r, QColor(255, 255, 255, 220));
+    g.setPen(CUIVRE);
+    g.drawText(r, Qt::AlignCenter, texte);
+  };
+  auto rappelsCoin = [&](double cx, double cy, double x, double y) {
+    rappel(ecran(cx, cy), ecran(x, cy), QString::fromStdString(fmt(std::abs(x - cx), 2)));
+    rappel(ecran(x, cy), ecran(x, y), QString::fromStdString(fmt(std::abs(y - cy), 2)));
+    g.setBrush(CUIVRE);
+    g.setPen(Qt::NoPen);
+    g.drawEllipse(ecran(cx, cy), 3.5, 3.5);
+  };
+  if (sel.type == Cible::Composant) {
+    for (const auto& k : p.composants) {
+      if (k.id != sel.id || k.ancrage == "libre") continue;
+      if (k.bord) {
+        const bool hz = horizontal(*k.bord);
+        const double centre = hz ? c.x0 : c.y0, demi = (hz ? c.L : c.W) / 2, u = leLongComposant(p, k);
+        const double ref = k.ancrage == "debut" ? centre - demi : k.ancrage == "fin" ? centre + demi : centre;
+        const double fixe = hz ? (*k.bord == Bord::N ? c.y0 + c.W / 2 : c.y0 - c.W / 2) : (*k.bord == Bord::E ? c.x0 + c.L / 2 : c.x0 - c.L / 2);
+        const QPointF a = hz ? ecran(ref, fixe) : ecran(fixe, ref), b = hz ? ecran(u, fixe) : ecran(fixe, u);
+        rappel(a, b, QString::fromStdString(fmt(std::abs(u - ref), 2)));
+      } else {
+        const Point q = posComposant(p, k);
+        if (k.ancrage == "centre") rappelsCoin(c.x0, c.y0, q.x, q.y);
+        else rappelsCoin(c.x0 + (k.ancrage[1] == 'E' ? 1 : -1) * c.L / 2, c.y0 + (k.ancrage[0] == 'N' ? 1 : -1) * c.W / 2, q.x, q.y);
+      }
+    }
+  } else if (sel.type == Cible::Trou) {
+    for (const auto& t : p.trous) {
+      if (t.id != sel.id || !t.coin) continue;
+      const Point q = posTrou(p, t);
+      rappelsCoin(c.x0 + ((*t.coin)[1] == 'E' ? 1 : -1) * c.L / 2, c.y0 + ((*t.coin)[0] == 'N' ? 1 : -1) * c.W / 2, q.x, q.y);
+    }
+  }
+  // Cadenas sur les composants verrouillés
+  for (const auto& k : p.composants) {
+    if (!k.verrou) continue;
+    for (const auto& gc : d.comps) {
+      if (gc.id != k.id) continue;
+      const QPointF hd = ecran(gc.x2, gc.y2) + QPointF(2, -2);
+      g.setPen(QPen(ENCRE, 1.4));
+      g.setBrush(Qt::NoBrush);
+      g.drawArc(QRectF(hd.x() - 1, hd.y() - 9, 8, 8), 0, 180 * 16);
+      g.setBrush(ENCRE);
+      g.drawRoundedRect(QRectF(hd.x() - 2, hd.y() - 5, 10, 7), 1.5, 1.5);
+    }
+  }
   if (sel.type == Cible::Carte) {
     for (const auto& [bord, x, y] : {std::tuple{'E', c.x0 + c.L / 2, c.y0}, std::tuple{'W', c.x0 - c.L / 2, c.y0}, std::tuple{'N', c.x0, c.y0 + c.W / 2},
                                      std::tuple{'S', c.x0, c.y0 - c.W / 2}}) {
@@ -339,7 +386,7 @@ VueCarte::Touche VueCarte::toucher(const QPointF& pt) const {
       if (std::hypot(x - w.x(), y - w.y()) <= tol * 1.4) return {Touche::Poignee, "", bord};
   }
   for (auto it = d.trous.rbegin(); it != d.trous.rend(); ++it)
-    if (std::hypot(it->x - w.x(), it->y - w.y()) <= std::max(d.vis.tete / 2, 1.5) + tol * 0.5) return {Touche::Trou, it->id};
+    if (std::hypot(it->x - w.x(), it->y - w.y()) <= std::max(it->vis.tete / 2, 1.5) + tol * 0.5) return {Touche::Trou, it->id};
   const GeoComp* meilleur = nullptr;
   double aire = 1e18;
   for (const auto& gc : d.comps) {
@@ -369,8 +416,7 @@ void VueCarte::deplacer(Projet& p, const Touche& t, double x, double y, bool fin
   if (t.type == Touche::Composant) {
     for (auto& k : p.composants)
       if (k.id == t.id) {
-        if (k.bord) placerSurBord(p, k, x, y);
-        else { k.x = x; k.y = y; }
+        placerComposant(p, k, x, y);
       }
   } else if (t.type == Touche::Trou) {
     for (auto& tr : p.trous)
@@ -405,6 +451,11 @@ void VueCarte::mousePressEvent(QMouseEvent* e) {
     return;
   }
   m_cible = toucher(e->position());
+  if (m_cible.type == Touche::Composant && verrouille(m_cible.id)) {
+    m_doc->selectionner({Cible::Composant, m_cible.id});
+    m_geste = Geste::Aucun;
+    return;
+  }
   if (m_cible.type == Touche::Composant || m_cible.type == Touche::Trou) {
     m_doc->selectionner({m_cible.type == Touche::Composant ? Cible::Composant : Cible::Trou, m_cible.id});
     m_origineObjet = positionObjet(m_cible);
@@ -426,6 +477,7 @@ void VueCarte::mouseMoveEvent(QMouseEvent* e) {
     const Touche t = toucher(e->position());
     if (t.type != m_survol.type || t.id != m_survol.id) { m_survol = t; update(); }
     setCursor(t.type == Touche::Poignee ? (t.bord == 'E' || t.bord == 'W' ? Qt::SizeHorCursor : Qt::SizeVerCursor)
+              : (t.type == Touche::Composant && verrouille(t.id)) ? Qt::ForbiddenCursor
               : (t.type == Touche::Composant || t.type == Touche::Trou) ? Qt::SizeAllCursor : Qt::ArrowCursor);
     return;
   }
@@ -467,7 +519,7 @@ void VueCarte::mouseReleaseEvent(QMouseEvent*) {
 
 void VueCarte::mouseDoubleClickEvent(QMouseEvent* e) {
   const Touche t = toucher(e->position());
-  if (t.type != Touche::Composant) return;
+  if (t.type != Touche::Composant || verrouille(t.id)) return;
   m_doc->modifier([&](Projet& p) {
     for (auto& k : p.composants) if (k.id == t.id && !k.bord) k.rot = (k.rot + 90) % 360;
   });
@@ -486,6 +538,7 @@ void VueCarte::keyPressEvent(QKeyEvent* e) {
   if (e->key() == Qt::Key_Escape) { m_doc->selectionner({}); return; }
   if (sel.type != Cible::Composant && sel.type != Cible::Trou) { QWidget::keyPressEvent(e); return; }
   const Touche t{sel.type == Cible::Composant ? Touche::Composant : Touche::Trou, sel.id};
+  if (t.type == Touche::Composant && verrouille(t.id) && e->key() != Qt::Key_Delete && e->key() != Qt::Key_Backspace) return;
   const double pas = (e->modifiers() & Qt::ShiftModifier) ? 5 : 0.5;
   double dx = 0, dy = 0;
   switch (e->key()) {
@@ -507,6 +560,11 @@ void VueCarte::keyPressEvent(QKeyEvent* e) {
   }
   const QPointF pos = positionObjet(t);
   m_doc->modifier([&](Projet& p) { deplacer(p, t, pos.x() + dx, pos.y() + dy, true); });
+}
+
+bool VueCarte::verrouille(const std::string& id) const {
+  for (const auto& k : m_doc->projet().composants) if (k.id == id) return k.verrou;
+  return false;
 }
 
 void VueCarte::leaveEvent(QEvent*) {

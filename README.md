@@ -22,7 +22,7 @@ Phase 0 (cadrage), voir [ETAT.md](ETAT.md) et [FEUILLE_DE_ROUTE.md](FEUILLE_DE_R
 
 Ouvrir l'onglet Actions du dépôt, cliquer sur la dernière compilation au vert, télécharger le paquet `Promethee-Windows`, le décompresser et lancer `Promethee.exe`. Aucune installation n'est nécessaire.
 
-Vue Carte : glisser un composant, un trou, ou une poignée du bord de la carte après avoir cliqué dessus ; molette pour zoomer ; double-clic pour pivoter un composant. Vue Boîtier : bouton gauche pour tourner autour, bouton droit pour déplacer, molette pour zoomer. Les deux vues, le panneau, les vérifications et la nomenclature suivent le même modèle en direct.
+Vue Carte : glisser un composant, un trou, ou une poignée du bord de la carte après avoir cliqué dessus ; molette pour zoomer ; double-clic pour pivoter un composant. Vue Boîtier : bouton gauche pour tourner autour, bouton droit pour déplacer, molette pour zoomer, cube de vue pour les vues normalisées (touches 0, 1, 3 et 7). Le panneau règle la vis et l'insert de chaque trou, l'ancrage et le verrou de chaque composant. Le dossier de fabrication s'exporte en STEP, IGES, BREP, STL, 3MF, OBJ, PLY, DXF, SVG, CSV et projet.
 
 ## Compiler sous Linux (Ubuntu 24.04)
 

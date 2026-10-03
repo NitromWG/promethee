@@ -9,7 +9,7 @@ find_package(OpenGL REQUIRED)
 
 set(PROMETHEE_OCCT_VISU TKService TKV3d TKOpenGl)
 add_executable(promethee_app WIN32 MACOSX_BUNDLE
-  main.cpp Document.cpp VueCarte.cpp Vue3D.cpp OcctGlTools.cpp Panneau.cpp FenetrePrincipale.cpp)
+  main.cpp Document.cpp VueCarte.cpp Vue3D.cpp OcctGlTools.cpp Panneau.cpp FenetrePrincipale.cpp DialogueExport.cpp)
 set_target_properties(promethee_app PROPERTIES OUTPUT_NAME Promethee)
 target_link_libraries(promethee_app PRIVATE Promethee::noyau Promethee::geometrie Qt6::Widgets Qt6::OpenGLWidgets OpenGL::GL ${PROMETHEE_OCCT_VISU})
 if(WIN32)

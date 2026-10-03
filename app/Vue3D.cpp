@@ -7,7 +7,10 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 
+#include <AIS_AnimationCamera.hxx>
 #include <Aspect_DisplayConnection.hxx>
+#include <Graphic3d_Camera.hxx>
+#include <Graphic3d_TransformPers.hxx>
 #include <Graphic3d_NameOfMaterial.hxx>
 #include <OpenGl_GraphicDriver.hxx>
 #include <Prs3d_Drawer.hxx>
@@ -80,6 +83,9 @@ Vue3D::Vue3D(Document* doc, QWidget* parent) : QOpenGLWidget(parent), m_doc(doc)
   m_visu->SetDefaultLights();
   m_visu->SetLightOn();
   m_ctx = new AIS_InteractiveContext(m_visu);
+  // Maillage d'affichage fin : arrondis lisses, sans facettes visibles.
+  m_ctx->DefaultDrawer()->SetDeviationCoefficient(0.0003);
+  m_ctx->DefaultDrawer()->SetDeviationAngle(3.0 * 3.14159265358979 / 180.0);
   m_vue = m_visu->CreateView();
   m_vue->SetImmediateUpdate(false);
 #ifndef __APPLE__
@@ -93,6 +99,23 @@ Vue3D::Vue3D(Document* doc, QWidget* parent) : QOpenGLWidget(parent), m_doc(doc)
   gestes.Bind(Aspect_VKeyMouse_LeftButton, AIS_MouseGesture_RotateOrbit);
   gestes.Bind(Aspect_VKeyMouse_RightButton, AIS_MouseGesture_Pan);
   gestes.Bind(Aspect_VKeyMouse_MiddleButton, AIS_MouseGesture_Pan);
+  // Cube de vue : un clic sur une face, une arête ou un coin amène la vue correspondante, en douceur.
+  m_cube = new AIS_ViewCube();
+  m_cube->SetViewAnimation(myViewAnimation);
+  m_cube->SetFixedAnimationLoop(false);
+  m_cube->SetAutoStartAnimation(true);
+  m_cube->SetSize(52);
+  m_cube->SetFontHeight(11);
+  m_cube->SetBoxColor(rgb(0xE8, 0xEC, 0xE9));
+  m_cube->SetBoxSideLabel(V3d_Xpos, "Droite");
+  m_cube->SetBoxSideLabel(V3d_Xneg, "Gauche");
+  m_cube->SetBoxSideLabel(V3d_Ypos, "Arrière");
+  m_cube->SetBoxSideLabel(V3d_Yneg, "Face");
+  m_cube->SetBoxSideLabel(V3d_Zpos, "Dessus");
+  m_cube->SetBoxSideLabel(V3d_Zneg, "Dessous");
+  m_cube->TransformPersistence()->SetCorner2d(Aspect_TOTP_RIGHT_UPPER);
+  m_cube->TransformPersistence()->SetOffset2d(NCollection_Vec2<int>(80, 80));
+  myViewAnimation->SetOwnDuration(0.35);
 
   setMouseTracking(true);
   setFocusPolicy(Qt::StrongFocus);
@@ -131,7 +154,10 @@ void Vue3D::initializeGL() {
     m_infoGl += QString::fromUtf8(it.Key().ToCString()) + QStringLiteral(" : ") + QString::fromUtf8(it.Value().ToCString()) + QLatin1Char('\n');
   const bool premier = !m_pret;
   m_pret = true;
-  if (premier) reconstruire();
+  if (premier) {
+    m_ctx->Display(m_cube, 0, 0, false);
+    reconstruire();
+  }
 }
 
 void Vue3D::paintGL() {
@@ -188,6 +214,7 @@ void Vue3D::OnSelectionChanged(const Handle(AIS_InteractiveContext)& ctx, const 
   ctx->InitSelected();
   if (ctx->MoreSelected()) {
     const Handle(AIS_InteractiveObject) obj = ctx->SelectedInteractive();
+    if (obj == m_cube) return;  // un clic sur le cube change la vue, pas la sélection
     if (obj == m_carte || obj == m_corps) c = {Cible::Carte, "carte"};
     for (const auto& [id, forme] : m_composants)
       if (obj == forme) c = {Cible::Composant, id};
@@ -217,7 +244,7 @@ void Vue3D::reconstruire() {
   std::ostringstream valides;
   for (const auto& [mur, liste] : decoupesValides(d))
     for (const auto& o : liste) valides << lettre(mur) << o.s << ',' << o.t << ',' << o.w << ',' << o.h << ',' << o.r << ';';
-  for (const auto& q : piliersValides(d)) valides << q.x << ',' << q.y << ';';
+  for (const auto& q : piliersValides(d)) valides << q.x << ',' << q.y << ',' << q.Rb << ',' << q.rp << ';';
   const std::string sc = signature(d.Lo, d.Wo, d.ro, d.Li, d.Wi, d.ri, d.zf, d.zt, d.zpb, d.Rb, d.rp, d.cx, d.cy, p.boitier.paroi, valides.str());
   if (sc != m_sigCorps) {
     m_sigCorps = sc;
@@ -233,7 +260,7 @@ void Vue3D::reconstruire() {
   }
   placerCouvercle();
   std::ostringstream trous;
-  for (const auto& t : d.trous) trous << t.x << ',' << t.y << ';';
+  for (const auto& t : d.trous) trous << t.x << ',' << t.y << ',' << t.vis.trou << ';';
   const std::string sp = signature(p.carte.x0, p.carte.y0, p.carte.L, p.carte.W, p.carte.r, p.carte.t, d.zpb, d.vis.trou, trous.str());
   if (sp != m_sigCarte) {
     m_sigCarte = sp;
@@ -312,6 +339,23 @@ void Vue3D::afficherSelection() {
 void Vue3D::setCouvercle(Couvercle c) {
   m_modeCouvercle = c;
   placerCouvercle();
+  m_vue->Invalidate();
+  update();
+}
+
+void Vue3D::vueStandard(V3d_TypeOfOrientation orientation) {
+  if (m_vue.IsNull()) return;
+  Handle(Graphic3d_Camera) depart = new Graphic3d_Camera();
+  depart->Copy(m_vue->Camera());
+  m_vue->SetProj(orientation);
+  m_vue->FitAll(0.08, false);
+  Handle(Graphic3d_Camera) arrivee = new Graphic3d_Camera();
+  arrivee->Copy(m_vue->Camera());
+  m_vue->Camera()->Copy(depart);
+  myViewAnimation->SetView(m_vue);
+  myViewAnimation->SetCameraStart(depart);
+  myViewAnimation->SetCameraEnd(arrivee);
+  myViewAnimation->StartTimer(0.0, 1.0, true, false);
   m_vue->Invalidate();
   update();
 }
