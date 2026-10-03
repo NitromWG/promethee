@@ -5,6 +5,7 @@
 
 #include <map>
 #include <string>
+#include <thread>
 
 #include <QOpenGLWidget>
 #include <QTimer>
@@ -28,6 +29,7 @@ public:
 
   void setCouvercle(Couvercle c);
   void recadrer();
+  void setBoitierTransparent(bool transparent);
   void vueStandard(V3d_TypeOfOrientation orientation);  // transition animée vers une vue normalisée
   const QString& infoGl() const { return m_infoGl; }
   gp_Dir directionCamera() const { return m_vue->Camera()->Direction(); }
@@ -64,7 +66,13 @@ private:
   Handle(AIS_Shape) m_corps, m_couvercle, m_carte;
   Handle(AIS_ViewCube) m_cube;
   std::map<std::string, Handle(AIS_Shape)> m_composants;
+  std::map<std::string, std::string> m_sigComposants;
   std::string m_sigCorps, m_sigCouvercle, m_sigCarte;
+  // Le boîtier et le couvercle se construisent et se maillent dans un fil à part : l'interface reste fluide.
+  void appliquer(const TopoDS_Shape& corps, const TopoDS_Shape& couvercle, const std::string& sc, const std::string& sl, const QString& erreur);
+  std::thread m_ouvrier;
+  bool m_enCours = false, m_relancer = false, m_cadreCorps = false, m_transparent = false;
+  std::string m_sigCorpsDemande, m_sigCouvercleDemande;
   QTimer m_minuteur;
   Couvercle m_modeCouvercle = Couvercle::Souleve;
   QString m_infoGl;

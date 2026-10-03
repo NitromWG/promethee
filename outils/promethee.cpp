@@ -26,7 +26,7 @@ namespace {
 
 void aide() {
   std::cout <<
-      "Prométhée 0.4, outil en ligne de commande\n\n"
+      "Prométhée 0.5, outil en ligne de commande\n\n"
       "Utilisation :\n"
       "  promethee verifier <projet.prom.json>             vérifie la carte et le boîtier\n"
       "  promethee corriger <projet.prom.json> [sortie]    applique les corrections automatiques\n"

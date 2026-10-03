@@ -110,6 +110,7 @@ struct Composant {
   double ax = 0, ay = 0;            // décalages d'ancrage
   bool verrou = false;              // ne se déplace pas à la souris ni au clavier
   std::string origine;              // « kicad » : placé par la CAO électronique, qui vérifie déjà l'implantation
+  bool dessous = false;             // posé sur la face arrière, sous la carte
 };
 
 struct Projet {

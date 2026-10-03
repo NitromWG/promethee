@@ -6,6 +6,7 @@
 #include <cmath>
 #include <map>
 
+#include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
@@ -20,7 +21,7 @@ using namespace prom;
 namespace {
 const QColor PLAN(0xE2, 0xE7, 0xE4), GRILLE(24, 33, 29, 14), GRILLE_FORTE(24, 33, 29, 28), PAROI(0xC9, 0xCF, 0xCB), FOND(0xD8, 0xDD, 0xD9),
     TRAIT(0x7F, 0x8B, 0x85), MASQUE(0x2E, 0x6A, 0x50), MASQUE_BORD(0x1E, 0x4C, 0x38), SERIGRAPHIE(0xF4, 0xF1, 0xE6), CUIVRE(0xB4, 0x65, 0x2B),
-    PASTILLE(0xC9, 0x8A, 0x45), ERREUR(0xC2, 0x40, 0x2E), ALERTE(0xA8, 0x74, 0x10), ENCRE(0x18, 0x21, 0x1D), ENCRE2(0x56, 0x64, 0x5D),
+    PASTILLE(0xC9, 0x8A, 0x45), SELECTION(0x1E, 0x7B, 0xE0), ERREUR(0xC2, 0x40, 0x2E), ALERTE(0xA8, 0x74, 0x10), ENCRE(0x18, 0x21, 0x1D), ENCRE2(0x56, 0x64, 0x5D),
     COTE_CARTE(0x2A, 0x62, 0x49);
 
 double borne(double v, double a, double b) { return std::min(b, std::max(a, v)); }
@@ -60,6 +61,12 @@ void VueCarte::recadrer() {
   update();
 }
 
+void VueCarte::setFaceArriere(bool dessous) {
+  m_dessous = dessous;
+  m_survol = {};
+  update();
+}
+
 void VueCarte::garderEnVue() {
   if (!m_cadre) return;
   const Derive& d = m_doc->derive();
@@ -94,11 +101,14 @@ void VueCarte::actualiserParois() {
   std::string cle = std::to_string(p.boitier.jeu) + "|" + std::to_string(p.boitier.paroi);
   for (const auto& k : p.carte.contours)
     for (const auto& e : k.elements) cle += "|" + std::to_string(e.debut.x) + "," + std::to_string(e.debut.y);
+  for (const auto& r : m_doc->derive().debords) cle += "|d" + std::to_string(r.x1) + "," + std::to_string(r.y1) + "," + std::to_string(r.x2) + "," + std::to_string(r.y2);
   if (cle == m_cleParois) return;
+  // Pendant un glissement, on garde les parois précédentes : le calcul exact reprend au lâcher.
+  if (m_doc->enGeste() && !m_paroiInt.empty()) return;
   m_cleParois = cle;
   try {
-    m_paroiInt = contourDecale(p, p.boitier.jeu);
-    m_paroiExt = contourDecale(p, p.boitier.jeu + p.boitier.paroi);
+    m_paroiInt = contourDecale(p, m_doc->derive(), p.boitier.jeu);
+    m_paroiExt = contourDecale(p, m_doc->derive(), p.boitier.jeu + p.boitier.paroi);
   } catch (const std::exception&) {
     m_paroiInt.clear();
     m_paroiExt.clear();
@@ -185,11 +195,15 @@ void VueCarte::paintEvent(QPaintEvent*) {
   g.setBrush(Qt::NoBrush);
   for (const auto& t : d.trous) g.drawPath(cercle(t.x, t.y, t.Rb));
 
-  // Composants
+  // Composants : ceux de l'autre face d'abord, estompés ; ceux de la face montrée par-dessus.
+  for (int passe = 0; passe < 2; ++passe)
   for (const auto& gc : d.comps) {
+    const bool actif = gc.dessous == m_dessous;
+    if ((passe == 1) != actif) continue;
     const Composant* k = nullptr;
     for (const auto& q : p.composants) if (q.id == gc.id) k = &q;
     if (!k) continue;
+    g.setOpacity(actif ? 1.0 : 0.18);
     const TypeComposant& T = *typeComposant(k->type);
     const double lx = (T.bord ? k->d : k->w) * m_s, ly = (T.bord ? k->w : k->d) * m_s, s = m_s;
     g.save();
@@ -250,6 +264,18 @@ void VueCarte::paintEvent(QPaintEvent*) {
       const QPointF pos = ecran(gc.x, gc.y2);
       g.drawText(QRectF(pos.x() - 40, pos.y() - f.pixelSize() * 1.7, 80, f.pixelSize() * 1.4), Qt::AlignCenter, QString::fromStdString(gc.ref));
     }
+    g.setOpacity(1.0);
+  }
+  if (m_dessous) {
+    QFont f = font();
+    f.setPixelSize(13);
+    f.setBold(true);
+    g.setFont(f);
+    const QString texte = QStringLiteral("Face arrière, vue depuis le dessus · touche B");
+    const QRectF bandeau(10, 8, QFontMetricsF(f).horizontalAdvance(texte) + 20, 24);
+    g.fillRect(bandeau, QColor(0x1E, 0x7B, 0xE0, 230));
+    g.setPen(Qt::white);
+    g.drawText(bandeau, Qt::AlignCenter, texte);
   }
 
   // Trous de fixation, dessinés au-dessus des composants pour qu'un conflit reste visible
@@ -330,15 +356,42 @@ void VueCarte::paintEvent(QPaintEvent*) {
   }
 
   // Survol et sélection
+  // Sélection en bleu franc (fond teinté, contour épais, étiquette) ; survol en bleu clair.
+  auto etiquette = [&](const QPointF& ancre, const QString& texte) {
+    QFont f = font();
+    f.setPixelSize(12);
+    f.setBold(true);
+    g.setFont(f);
+    const double l = QFontMetricsF(f).horizontalAdvance(texte) + 14;
+    const QRectF r(ancre.x() - l / 2, ancre.y() - 26, l, 20);
+    g.setPen(Qt::NoPen);
+    g.setBrush(SELECTION);
+    g.drawRoundedRect(r, 5, 5);
+    g.setPen(Qt::white);
+    g.drawText(r, Qt::AlignCenter, texte);
+  };
   auto contour = [&](const Cible& cb, bool fort) {
-    g.setPen(QPen(CUIVRE, fort ? 2 : 1.5));
+    QColor fond = SELECTION;
+    fond.setAlpha(fort ? 60 : 25);
+    g.setPen(QPen(fort ? SELECTION : QColor(0x1E, 0x7B, 0xE0, 150), fort ? 3 : 1.6));
     g.setBrush(Qt::NoBrush);
     if (cb.type == Cible::Composant) {
-      for (const auto& gc : d.comps) if (gc.id == cb.id) g.drawRect(QRectF(ecran(gc.x1, gc.y2), ecran(gc.x2, gc.y1)).adjusted(-3, -3, 3, 3));
+      for (const auto& gc : d.comps)
+        if (gc.id == cb.id) {
+          const QRectF r = QRectF(ecran(gc.x1, gc.y2), ecran(gc.x2, gc.y1)).adjusted(-3, -3, 3, 3);
+          g.fillRect(r, fond);
+          g.drawRect(r);
+          if (fort) etiquette(QPointF(r.center().x(), r.top()), QString::fromStdString(gc.ref) + (gc.dessous ? QStringLiteral(" · dessous") : QString()));
+        }
     } else if (cb.type == Cible::Trou) {
-      for (const auto& t : d.trous) if (t.id == cb.id) g.drawPath(cercle(t.x, t.y, t.Rb + 2.5 / m_s));
+      for (const auto& t : d.trous)
+        if (t.id == cb.id) {
+          g.setBrush(fond);
+          g.drawPath(cercle(t.x, t.y, t.Rb + 2.5 / m_s));
+          if (fort) etiquette(ecran(t.x, t.y + t.Rb + 2.5 / m_s), QString::fromStdString(t.ref));
+        }
     } else if (cb.type == Cible::Carte) {
-      if (c.libre()) { g.setPen(QPen(CUIVRE, 3)); g.drawPath(cheminCarte()); }
+      if (c.libre()) { g.setPen(QPen(SELECTION, 3)); g.drawPath(cheminCarte()); }
       else g.drawPath(rr(c.x0, c.y0, c.L / 2 + 2.5 / m_s, c.W / 2 + 2.5 / m_s, c.r + 2.5 / m_s));
     }
   };
@@ -429,6 +482,7 @@ VueCarte::Touche VueCarte::toucher(const QPointF& pt) const {
   const GeoComp* meilleur = nullptr;
   double aire = 1e18;
   for (const auto& gc : d.comps) {
+    if (gc.dessous != m_dessous) continue;  // seule la face montrée se sélectionne
     const double m = tol * 0.5;
     if (w.x() >= gc.x1 - m && w.x() <= gc.x2 + m && w.y() >= gc.y1 - m && w.y() <= gc.y2 + m) {
       const double a = (gc.x2 - gc.x1) * (gc.y2 - gc.y1);

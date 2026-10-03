@@ -51,6 +51,24 @@ FenetrePrincipale::FenetrePrincipale() : m_doc(new Document(this)) {
   m_panneau = new Panneau(m_doc);
 
   QToolBar outilsCarte, outilsBoitier;
+  auto* groupeFace = new QActionGroup(this);
+  for (const auto& [nom, dessous] : {std::pair{QStringLiteral("Dessus"), false}, std::pair{QStringLiteral("Dessous"), true}}) {
+    QAction* a = outilsCarte.addAction(nom);
+    a->setCheckable(true);
+    a->setChecked(!dessous);
+    a->setToolTip(dessous ? QStringLiteral("Montrer et modifier la face arrière de la carte (B)") : QStringLiteral("Montrer et modifier la face avant de la carte (B)"));
+    groupeFace->addAction(a);
+    const bool d = dessous;
+    connect(a, &QAction::triggered, this, [this, d] { m_carte->setFaceArriere(d); });
+  }
+  auto* basculerFace = new QAction(QStringLiteral("Changer de face"), this);
+  basculerFace->setShortcut(QKeySequence(Qt::Key_B));
+  connect(basculerFace, &QAction::triggered, this, [this, groupeFace] {
+    const bool d = !m_carte->faceArriere();
+    m_carte->setFaceArriere(d);
+    groupeFace->actions().at(d ? 1 : 0)->setChecked(true);
+  });
+  addAction(basculerFace);
   QAction* recadrerCarte = outilsCarte.addAction(QStringLiteral("Recadrer"));
   connect(recadrerCarte, &QAction::triggered, m_carte, &VueCarte::recadrer);
   auto* groupeCouvercle = new QActionGroup(this);
@@ -64,6 +82,11 @@ FenetrePrincipale::FenetrePrincipale() : m_doc(new Document(this)) {
     const Vue3D::Couvercle m = mode;
     connect(a, &QAction::triggered, this, [this, m] { m_vue3d->setCouvercle(m); });
   }
+  QAction* transparent = outilsBoitier.addAction(QStringLiteral("Transparent"));
+  transparent->setCheckable(true);
+  transparent->setToolTip(QStringLiteral("Boîtier transparent : voir la face arrière de la carte à travers le fond (T)"));
+  transparent->setShortcut(QKeySequence(Qt::Key_T));
+  connect(transparent, &QAction::toggled, this, [this](bool on) { m_vue3d->setBoitierTransparent(on); });
   QAction* recadrer3d = outilsBoitier.addAction(QStringLiteral("Recadrer"));
   connect(recadrer3d, &QAction::triggered, m_vue3d, &Vue3D::recadrer);
 
@@ -138,7 +161,7 @@ FenetrePrincipale::FenetrePrincipale() : m_doc(new Document(this)) {
   QMenu* aide = menuBar()->addMenu(QStringLiteral("Ai&de"));
   aide->addAction(QStringLiteral("À propos de Prométhée"), this, [this] {
     QMessageBox::about(this, QStringLiteral("À propos de Prométhée"),
-                       QStringLiteral("<h3>Prométhée 0.4</h3><p>Plateforme libre d’ingénierie intégrée : la carte électronique et son boîtier forment un seul modèle.</p>"
+                       QStringLiteral("<h3>Prométhée 0.5</h3><p>Plateforme libre d’ingénierie intégrée : la carte électronique et son boîtier forment un seul modèle.</p>"
                                       "<p>Vue Carte : glisser un composant, un trou ou une poignée du bord de la carte, molette pour zoomer, double-clic pour pivoter. "
                                       "Vue Boîtier : bouton gauche pour tourner, droit pour déplacer, molette pour zoomer.</p>"
                                       "<p>Licence GPL-3.0. Géométrie : Open CASCADE Technology. Interface : Qt.</p><pre>%1</pre>")

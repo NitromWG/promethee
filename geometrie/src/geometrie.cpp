@@ -20,6 +20,8 @@
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepTools.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
@@ -182,8 +184,25 @@ TopoDS_Shape prismeFil(const TopoDS_Wire& w, double z0, double h) {
   return BRepPrimAPI_MakePrism(face, gp_Vec(0, 0, h)).Shape();
 }
 
-TopoDS_Shape prismeCarteDecalee(const Projet& p, double decalage, double z0, double h) {
-  return prismeFil(decalerFil(filContour(p.carte.contours.front(), 0), decalage), z0, h);
+// Enveloppe d'une carte libre : son contour, élargi autour des composants qui en débordent.
+TopoDS_Wire filEnveloppe(const Projet& p, const Derive& d) {
+  const TopoDS_Wire carte = filContour(p.carte.contours.front(), 0);
+  if (d.debords.empty()) return carte;
+  TopoDS_Shape u = BRepBuilderAPI_MakeFace(carte, true).Face();
+  for (const auto& r : d.debords) {
+    BRepBuilderAPI_MakePolygon poly(gp_Pnt(r.x1, r.y1, 0), gp_Pnt(r.x2, r.y1, 0), gp_Pnt(r.x2, r.y2, 0), gp_Pnt(r.x1, r.y2, 0), true);
+    u = BRepAlgoAPI_Fuse(u, BRepBuilderAPI_MakeFace(poly.Wire(), true).Face()).Shape();
+  }
+  ShapeUpgrade_UnifySameDomain uni(u, true, true, false);
+  uni.Build();
+  TopoDS_Face meilleure;
+  double aire = -1;
+  for (TopExp_Explorer ex(uni.Shape(), TopAbs_FACE); ex.More(); ex.Next()) {
+    GProp_GProps gp;
+    BRepGProp::SurfaceProperties(ex.Current(), gp);
+    if (std::abs(gp.Mass()) > aire) { aire = std::abs(gp.Mass()); meilleure = TopoDS::Face(ex.Current()); }
+  }
+  return meilleure.IsNull() ? carte : BRepTools::OuterWire(meilleure);
 }
 
 // Les noms accentués passent mal dans le STEP selon les logiciels : on les écrit en ASCII.
@@ -230,8 +249,9 @@ void silencer() {
 
 TopoDS_Shape construireCorps(const Projet& p, const Derive& d) {
   const auto& b = p.boitier;
-  const TopoDS_Shape exterieur = d.libre ? prismeCarteDecalee(p, b.jeu + b.paroi, 0, d.zt) : prismeRR(d.cx, d.cy, d.Lo / 2, d.Wo / 2, d.ro, 0, d.zt);
-  const TopoDS_Shape cavite = d.libre ? prismeCarteDecalee(p, b.jeu, d.zf, d.zt - d.zf + 1) : prismeRR(d.cx, d.cy, d.Li / 2, d.Wi / 2, d.ri, d.zf, d.zt - d.zf + 1);
+  const TopoDS_Wire env = d.libre ? filEnveloppe(p, d) : TopoDS_Wire();
+  const TopoDS_Shape exterieur = d.libre ? prismeFil(decalerFil(env, b.jeu + b.paroi), 0, d.zt) : prismeRR(d.cx, d.cy, d.Lo / 2, d.Wo / 2, d.ro, 0, d.zt);
+  const TopoDS_Shape cavite = d.libre ? prismeFil(decalerFil(env, b.jeu), d.zf, d.zt - d.zf + 1) : prismeRR(d.cx, d.cy, d.Li / 2, d.Wi / 2, d.ri, d.zf, d.zt - d.zf + 1);
   TopoDS_Shape corps = booleen(false, exterieur, {cavite});
 
   std::vector<TopoDS_Shape> futs, retraits;
@@ -249,11 +269,12 @@ TopoDS_Shape construireCorps(const Projet& p, const Derive& d) {
 TopoDS_Shape construireCouvercle(const Projet& p, const Derive& d) {
   const double e = p.boitier.couvercle;
   const auto& b = p.boitier;
-  const TopoDS_Shape plaque = d.libre ? prismeCarteDecalee(p, b.jeu + b.paroi, d.zt, e) : prismeRR(d.cx, d.cy, d.Lo / 2, d.Wo / 2, d.ro, d.zt, e);
+  const TopoDS_Wire env = d.libre ? filEnveloppe(p, d) : TopoDS_Wire();
+  const TopoDS_Shape plaque = d.libre ? prismeFil(decalerFil(env, b.jeu + b.paroi), d.zt, e) : prismeRR(d.cx, d.cy, d.Lo / 2, d.Wo / 2, d.ro, d.zt, e);
   // La lèvre monte de 0,5 mm dans la plaque pour une union franche, sans face commune.
-  const TopoDS_Shape levreExt = d.libre ? prismeCarteDecalee(p, b.jeu - Levre::jeu, d.zLevre, Levre::h + 0.5)
+  const TopoDS_Shape levreExt = d.libre ? prismeFil(decalerFil(env, b.jeu - Levre::jeu), d.zLevre, Levre::h + 0.5)
                                         : prismeRR(d.cx, d.cy, d.lo.hx, d.lo.hy, d.lo.r, d.zLevre, Levre::h + 0.5);
-  const TopoDS_Shape levreInt = d.libre ? prismeCarteDecalee(p, b.jeu - Levre::jeu - Levre::ep, d.zLevre - 1, Levre::h + 1.5)
+  const TopoDS_Shape levreInt = d.libre ? prismeFil(decalerFil(env, b.jeu - Levre::jeu - Levre::ep), d.zLevre - 1, Levre::h + 1.5)
                                         : prismeRR(d.cx, d.cy, d.li.hx, d.li.hy, d.li.r, d.zLevre - 1, Levre::h + 1.5);
   TopoDS_Shape couvercle = booleen(true, plaque, {booleen(false, levreExt, {levreInt})});
   std::vector<TopoDS_Shape> percages;
@@ -272,10 +293,10 @@ TopoDS_Shape construireCarte(const Projet& p, const Derive& d) {
   return booleen(false, plaque, trous);
 }
 
-std::vector<Point> contourDecale(const Projet& p, double decalage, double pas) {
+std::vector<Point> contourDecale(const Projet& p, const Derive& d, double decalage, double pas) {
   std::vector<Point> res;
   if (!p.carte.libre()) return res;
-  const TopoDS_Wire w = decalerFil(filContour(p.carte.contours.front(), 0), decalage);
+  const TopoDS_Wire w = decalerFil(filEnveloppe(p, d), decalage);
   for (BRepTools_WireExplorer ex(w); ex.More(); ex.Next()) {
     BRepAdaptor_Curve courbe(ex.Current());
     const double f = courbe.FirstParameter(), l = courbe.LastParameter();
@@ -294,8 +315,9 @@ std::vector<Point> contourDecale(const Projet& p, double decalage, double pas) {
 TopoDS_Shape construireComposant(const Derive& d, const GeoComp& g) {
   const TypeComposant* T = typeComposant(g.type);
   const double h = std::max(0.2, g.h);
-  if (T && T->rond) return cylindre(g.x, g.y, d.zpt, std::max(0.1, std::min(g.hx, g.hy)), h);
-  return BRepPrimAPI_MakeBox(gp_Pnt(g.x - g.hx, g.y - g.hy, d.zpt), std::max(0.1, 2 * g.hx), std::max(0.1, 2 * g.hy), h).Shape();
+  const double z0 = g.dessous ? d.zpb - h : d.zpt;  // face arrière : sous la carte
+  if (T && T->rond) return cylindre(g.x, g.y, z0, std::max(0.1, std::min(g.hx, g.hy)), h);
+  return BRepPrimAPI_MakeBox(gp_Pnt(g.x - g.hx, g.y - g.hy, z0), std::max(0.1, 2 * g.hx), std::max(0.1, 2 * g.hy), h).Shape();
 }
 
 double volume(const TopoDS_Shape& s) {

@@ -227,6 +227,16 @@ void Panneau::construireProprietes() {
       m_synchros.push_back([rot, K] { const QSignalBlocker b(rot); rot->setCurrentIndex(rot->findData(K().rot)); });
       f->addRow(QStringLiteral("Rotation"), rot);
       champsPosition.push_back(rot);
+      auto* face = new QComboBox;
+      face->addItem(QStringLiteral("Dessus (face avant)"), false);
+      face->addItem(QStringLiteral("Dessous (face arrière)"), true);
+      face->setCurrentIndex(k0->dessous ? 1 : 0);
+      connect(face, &QComboBox::currentIndexChanged, this, [this, face, id] {
+        const bool dessous = face->currentData().toBool();
+        m_doc->modifier([&](Projet& p) { if (auto* k = trouverComposant(p, id)) k->dessous = dessous; });
+      });
+      m_synchros.push_back([face, K] { const QSignalBlocker b(face); face->setCurrentIndex(K().dessous ? 1 : 0); });
+      f->addRow(QStringLiteral("Face"), face);
     }
     f = groupe(colonne, QStringLiteral("Contrainte quand la carte change de taille"));
     auto* ancrage = new QComboBox;

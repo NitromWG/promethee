@@ -15,6 +15,7 @@
 #include <OpenGl_GraphicDriver.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_LineAspect.hxx>
+#include <StdPrs_ToolTriangulatedShape.hxx>
 #include <TopLoc_Location.hxx>
 #include <gp_Trsf.hxx>
 
@@ -86,6 +87,12 @@ Vue3D::Vue3D(Document* doc, QWidget* parent) : QOpenGLWidget(parent), m_doc(doc)
   // Maillage d'affichage fin : arrondis lisses, sans facettes visibles.
   m_ctx->DefaultDrawer()->SetDeviationCoefficient(0.0003);
   m_ctx->DefaultDrawer()->SetDeviationAngle(3.0 * 3.14159265358979 / 180.0);
+  // Sélection en bleu franc, survol en bleu clair : la pièce choisie se voit tout de suite.
+  m_ctx->SelectionStyle()->SetColor(rgb(0x1E, 0x7B, 0xE0));
+  m_ctx->SelectionStyle()->SetDisplayMode(AIS_Shaded);
+  m_ctx->SelectionStyle()->SetTransparency(0.0f);
+  m_ctx->HighlightStyle()->SetColor(rgb(0x7F, 0xB8, 0xF5));
+  m_ctx->HighlightStyle()->SetDisplayMode(AIS_Shaded);
   m_vue = m_visu->CreateView();
   m_vue->SetImmediateUpdate(false);
 #ifndef __APPLE__
@@ -127,6 +134,7 @@ Vue3D::Vue3D(Document* doc, QWidget* parent) : QOpenGLWidget(parent), m_doc(doc)
 }
 
 Vue3D::~Vue3D() {
+  if (m_ouvrier.joinable()) m_ouvrier.join();
   Handle(Aspect_DisplayConnection) affichage = m_visu->Driver()->GetDisplayConnection();
   m_ctx->RemoveAll(false);
   m_ctx.Nullify();
@@ -299,18 +307,35 @@ void Vue3D::reconstruire() {
   for (const auto& [mur, liste] : decoupesValides(d))
     for (const auto& o : liste) valides << lettre(mur) << o.s << ',' << o.t << ',' << o.w << ',' << o.h << ',' << o.r << ';';
   for (const auto& q : piliersValides(d)) valides << q.x << ',' << q.y << ',' << q.Rb << ',' << q.rp << ';';
-  const std::string sc = signature(d.Lo, d.Wo, d.ro, d.Li, d.Wi, d.ri, d.zf, d.zt, d.zpb, d.Rb, d.rp, d.cx, d.cy, p.boitier.paroi, valides.str(), forme.str());
-  if (sc != m_sigCorps) {
-    m_sigCorps = sc;
-    afficher(m_corps, construireCorps(p, d), rgb(0xD3, 0xD8, 0xD4));
-  }
+  for (const auto& r : d.debords) forme << 'd' << r.x1 << ',' << r.y1 << ',' << r.x2 << ',' << r.y2 << ';';
+  const std::string sc = signature(d.Lo, d.Wo, d.ro, d.Li, d.Wi, d.ri, d.zf, d.zt, d.zpb, d.Rb, d.rp, d.cx, d.cy, p.boitier.paroi, p.boitier.jeu, valides.str(), forme.str());
   std::ostringstream percages;
   for (const auto& o : percagesValides(d)) percages << o.x << ',' << o.y << ',' << o.d << ';';
-  const std::string sl = signature(d.Lo, d.Wo, d.ro, d.lo.hx, d.lo.hy, d.li.hx, d.li.hy, d.zt, d.ztop, d.cx, d.cy, percages.str(), forme.str());
-  if (sl != m_sigCouvercle) {
-    m_sigCouvercle = sl;
-    afficher(m_couvercle, construireCouvercle(p, d), rgb(0xD9, 0xDD, 0xD9));
-    m_ctx->Deactivate(m_couvercle);
+  const std::string sl = signature(d.Lo, d.Wo, d.ro, d.lo.hx, d.lo.hy, d.li.hx, d.li.hy, d.zt, d.ztop, d.cx, d.cy, p.boitier.jeu, p.boitier.paroi, percages.str(), forme.str());
+  // Boîtier et couvercle : calculés et maillés dans un fil à part, appliqués à leur arrivée.
+  if (sc != m_sigCorps || sl != m_sigCouvercle) {
+    if (m_enCours) {
+      m_relancer = true;
+    } else if (sc != m_sigCorpsDemande || sl != m_sigCouvercleDemande) {
+      m_enCours = true;
+      m_sigCorpsDemande = sc;
+      m_sigCouvercleDemande = sl;
+      const bool faireCorps = sc != m_sigCorps, faireCouvercle = sl != m_sigCouvercle;
+      const Handle(Prs3d_Drawer) dessin = m_ctx->DefaultDrawer();
+      m_ouvrier = std::thread([this, p, d, sc, sl, faireCorps, faireCouvercle, dessin] {
+        TopoDS_Shape corps, couvercle;
+        QString erreur;
+        try {
+          if (faireCorps) { corps = construireCorps(p, d); StdPrs_ToolTriangulatedShape::Tessellate(corps, dessin); }
+          if (faireCouvercle) { couvercle = construireCouvercle(p, d); StdPrs_ToolTriangulatedShape::Tessellate(couvercle, dessin); }
+        } catch (const std::exception& e) {
+          erreur = QString::fromUtf8(e.what());
+        } catch (...) {
+          erreur = QStringLiteral("Construction du boîtier impossible.");
+        }
+        QMetaObject::invokeMethod(this, [this, corps, couvercle, sc, sl, erreur] { appliquer(corps, couvercle, sc, sl, erreur); }, Qt::QueuedConnection);
+      });
+    }
   }
   placerCouvercle();
   std::ostringstream trous;
@@ -327,12 +352,16 @@ void Vue3D::reconstruire() {
     if (!k) continue;
     Handle(AIS_Shape) objet;
     if (auto it = m_composants.find(g.id); it != m_composants.end()) objet = it->second;
-    afficher(objet, construireComposant(d, g), couleurComposant(*k));
-    objet->SetColor(couleurComposant(*k));
+    const std::string sg = signature(g.x, g.y, g.hx, g.hy, g.h, g.dessous, d.zpt, d.zpb, k->type, k->valeur);
+    if (objet.IsNull() || m_sigComposants[g.id] != sg) {
+      afficher(objet, construireComposant(d, g), couleurComposant(*k));
+      objet->SetColor(couleurComposant(*k));
+      m_sigComposants[g.id] = sg;
+    }
     restants[g.id] = objet;
   }
   for (const auto& [id, objet] : m_composants)
-    if (!restants.count(id)) m_ctx->Remove(objet, false);
+    if (!restants.count(id)) { m_ctx->Remove(objet, false); m_sigComposants.erase(id); }
   m_composants = restants;
   afficherSelection();
   if (!m_cadre) {
@@ -352,6 +381,59 @@ void Vue3D::reconstruire() {
         }
     if (deborde) m_vue->FitAll(0.08, false);
   }
+  m_vue->Invalidate();
+  update();
+}
+
+void Vue3D::appliquer(const TopoDS_Shape& corps, const TopoDS_Shape& couvercle, const std::string& sc, const std::string& sl, const QString& erreur) {
+  if (m_ouvrier.joinable()) m_ouvrier.join();
+  m_enCours = false;
+  auto afficher = [this](Handle(AIS_Shape)& objet, const TopoDS_Shape& forme, const Quantity_Color& couleur) {
+    if (objet.IsNull()) {
+      objet = new AIS_Shape(forme);
+      styliser(objet, couleur);
+      m_ctx->Display(objet, AIS_Shaded, 0, false);
+    } else {
+      objet->SetShape(forme);
+      m_ctx->Redisplay(objet, false);
+    }
+  };
+  if (erreur.isEmpty()) {
+    if (!corps.IsNull()) {
+      afficher(m_corps, corps, rgb(0xD3, 0xD8, 0xD4));
+      m_sigCorps = sc;
+      setBoitierTransparent(m_transparent);
+    }
+    if (!couvercle.IsNull()) {
+      afficher(m_couvercle, couvercle, rgb(0xD9, 0xDD, 0xD9));
+      m_ctx->Deactivate(m_couvercle);
+      m_sigCouvercle = sl;
+    }
+    placerCouvercle();
+    if (!m_cadreCorps && !m_corps.IsNull()) {
+      m_vue->FitAll(0.08, false);
+      m_cadreCorps = true;
+    }
+  } else {
+    // Échec : on garde l'affichage précédent ; la prochaine modification retentera.
+    m_sigCorpsDemande.clear();
+    m_sigCouvercleDemande.clear();
+  }
+  m_vue->Invalidate();
+  update();
+  if (m_relancer) {
+    m_relancer = false;
+    planifier();
+  }
+}
+
+void Vue3D::setBoitierTransparent(bool transparent) {
+  m_transparent = transparent;
+  if (m_corps.IsNull()) return;
+  m_ctx->SetTransparency(m_corps, transparent ? 0.7 : 0.0, false);
+  // Transparent : le boîtier laisse passer les clics vers la carte et ses composants.
+  if (transparent) m_ctx->Deactivate(m_corps);
+  else m_ctx->Activate(m_corps, 0);
   m_vue->Invalidate();
   update();
 }

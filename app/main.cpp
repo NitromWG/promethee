@@ -14,6 +14,7 @@
 #include "Document.hpp"
 #include "FenetrePrincipale.hpp"
 #include "Vue3D.hpp"
+#include "VueCarte.hpp"
 #include "promethee/placement.hpp"
 
 int main(int argc, char** argv) {
@@ -40,7 +41,7 @@ int main(int argc, char** argv) {
   std::setlocale(LC_NUMERIC, "C");
   QCoreApplication::setApplicationName(QStringLiteral("Prométhée"));
   QCoreApplication::setOrganizationName(QStringLiteral("Prométhée"));
-  QCoreApplication::setApplicationVersion(QStringLiteral("0.4.0"));
+  QCoreApplication::setApplicationVersion(QStringLiteral("0.5.0"));
   QLocale::setDefault(QLocale(QLocale::French, QLocale::France));
 
   // Thème clair et cohérent, quel que soit le thème du système : papier, encre et cuivre, comme le prototype.
@@ -117,8 +118,24 @@ int main(int argc, char** argv) {
     carteKicad = args.at(kicad + 1);
     args.remove(kicad, 2);
   }
+  // --dessous : montre la face arrière ; --transparent : boîtier transparent ; --selection REF : sélectionne un composant.
+  const bool dessous = args.removeAll(QStringLiteral("--dessous")) > 0;
+  const bool transparent = args.removeAll(QStringLiteral("--transparent")) > 0;
+  const int iSel = static_cast<int>(args.indexOf(QStringLiteral("--selection")));
+  QString refSelection;
+  if (iSel > 0 && iSel + 1 < args.size()) {
+    refSelection = args.at(iSel + 1);
+    args.remove(iSel, 2);
+  }
   if (args.size() > 1) fenetre.ouvrirFichier(args.at(1));
   fenetre.show();
+  if (dessous || transparent || !refSelection.isEmpty())
+    QTimer::singleShot(900, &fenetre, [&fenetre, dessous, transparent, refSelection] {
+      if (dessous) fenetre.vueCarte()->setFaceArriere(true);
+      if (transparent) fenetre.vue3D()->setBoitierTransparent(true);
+      for (const auto& k : fenetre.document()->projet().composants)
+        if (QString::fromStdString(k.ref) == refSelection) fenetre.document()->selectionner({Cible::Composant, k.id});
+    });
   if (!carteKicad.isEmpty()) QTimer::singleShot(300, &fenetre, [&fenetre, carteKicad] { fenetre.importerFichierKicad(carteKicad, false); });
   if (essai)
     QTimer::singleShot(800, &fenetre, [&fenetre] {

@@ -75,12 +75,7 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
       const Composant* k = nullptr;
       for (const auto& q : p.composants) if (q.id == g.id) k = &q;
       if (k && k->origine == "kicad") {
-        // Placé par KiCad : il peut déborder de la carte, à condition de rester à l'écart de la paroi.
-        if (hors > b.jeu - 0.3) {
-          const double j2 = std::ceil((hors + 0.4) * 2) / 2;
-          ajouter(E, "touche_paroi", g.ref + " déborde de la carte de " + fmt(hors) + " mm et touche la paroi du boîtier.", {g.id},
-                  Correction{"Jeu de " + fmt(j2) + " mm autour de la carte", "jeu", "", j2});
-        }
+        // Placé par KiCad : il peut déborder de la carte ; le boîtier s'élargit autour de lui (voir Derive::debords).
       } else if (hors > 0.01) {
         ajouter(E, "hors_carte", g.ref + " dépasse du bord de la carte de " + fmt(hors) + " mm.", {g.id});
       }
@@ -95,24 +90,21 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
       if (a.mur == e.mur && std::abs(a.u - e.u) < (a.w + e.w) / 2 + 0.6 && std::abs(a.zc - e.zc) < (a.h + e.h) / 2 + 0.6)
         ajouter(E, "decoupes", "Les découpes de " + decs[i]->ref + " et " + decs[j]->ref + " se touchent.", {decs[i]->id, decs[j]->id});
     }
+  std::vector<char> deKicad(d.comps.size(), 0);
+  for (size_t i = 0; i < d.comps.size() && i < p.composants.size(); ++i) deKicad[i] = p.composants[i].origine == "kicad";
   for (size_t i = 0; i < d.comps.size(); ++i)
     for (size_t j = i + 1; j < d.comps.size(); ++j) {
       const auto& a = d.comps[i];
       const auto& e = d.comps[j];
       // Deux composants placés par KiCad : l'implantation relève de la vérification de KiCad (zones de placement exactes).
-      bool deuxKicad = true;
-      for (const auto* g2 : {&a, &e}) {
-        bool kicad = false;
-        for (const auto& q : p.composants) if (q.id == g2->id) kicad = q.origine == "kicad";
-        deuxKicad = deuxKicad && kicad;
-      }
-      if (deuxKicad) continue;
+      // Deux faces différentes : pas de conflit.
+      if ((deKicad[i] && deKicad[j]) || a.dessous != e.dessous) continue;
       if (a.x1 < e.x2 - 0.05 && e.x1 < a.x2 - 0.05 && a.y1 < e.y2 - 0.05 && e.y1 < a.y2 - 0.05)
         ajouter(E, "chevauchement", a.ref + " et " + e.ref + " se chevauchent.", {a.id, e.id});
     }
   for (const auto& t : d.trous)
     for (const auto& g : d.comps)
-      if (distRectPoint(g, t.x, t.y) < t.rTete)
+      if (!g.dessous && distRectPoint(g, t.x, t.y) < t.rTete)
         ajouter(E, "tete_vis", g.ref + " empiète sur la tête de vis du trou " + t.ref + ".", {g.id, t.id});
   for (const auto& t : d.trous) {
     const double minBord = t.vis.trou / 2 + 1;
@@ -135,7 +127,20 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
       if (std::hypot(a.x - e.x, a.y - e.y) < a.Rb + e.Rb + 0.4)
         ajouter(E, "piliers", "Les piliers des trous " + a.ref + " et " + e.ref + " se touchent.", {a.id, e.id});
     }
+  // Face arrière : place sous la carte, à l'écart du fond et des piliers.
   for (const auto& g : d.comps) {
+    if (!g.dessous) continue;
+    if (g.bas < d.zf + 0.5) {
+      const double v2 = std::ceil((g.h + 0.5) * 2) / 2;
+      ajouter(E, "dessous_fond", g.ref + " (face arrière, " + fmt(g.h) + " mm de haut) touche le fond du boîtier : entretoises trop courtes.", {g.id},
+              Correction{"Entretoises de " + fmt(v2) + " mm", "entretoise", "", v2});
+    }
+    for (const auto& t : d.trous)
+      if (distRectPoint(g, t.x, t.y) < t.Rb + 0.3)
+        ajouter(E, "pilier_dessous", "Le pilier du trou " + t.ref + " heurte " + g.ref + " sous la carte.", {g.id, t.id});
+  }
+  for (const auto& g : d.comps) {
+    if (g.dessous) continue;
     const TypeComposant& T = *typeComposant(g.type);
     if (T.bouton) {
       if (g.top < d.zt - 0.3)

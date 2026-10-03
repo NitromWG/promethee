@@ -4,6 +4,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <cmath>
 
 #include "promethee/kicad.hpp"
 
@@ -94,7 +95,10 @@ TEST_CASE("Une carte KiCad devient un projet dont le boîtier épouse le contour
   CHECK(estValide(carte));
   const Boite b = encombrement(corps);
   CHECK(b.xmax - b.xmin == Approx(52.07 + 2 * (p.boitier.jeu + p.boitier.paroi)).margin(0.01));
-  CHECK(b.ymax - b.ymin == Approx(46.355 + 2 * (p.boitier.jeu + p.boitier.paroi)).margin(0.01));
+  // En Y, le connecteur P4 dépasse du bord de la carte : le boîtier s'élargit d'autant à cet endroit.
+  double ymin = -23.1775, ymax = 23.1775;
+  for (const auto& r : d.debords) { ymin = std::min(ymin, r.y1); ymax = std::max(ymax, r.y2); }
+  CHECK(b.ymax - b.ymin == Approx(ymax - ymin + 2 * (p.boitier.jeu + p.boitier.paroi)).margin(0.02));
   CHECK(volume(carte) == Approx(52.07 * 46.355 * 1.6 - 4 * 3.14159265 * 1.6 * 1.6 * 1.6).epsilon(0.002));
   // Le projet se relit à l'identique, contour compris.
   const Projet q = normaliser(versJson(p));
@@ -108,7 +112,7 @@ TEST_CASE("Un contour arrondi donne un boîtier arrondi valide et des plans exac
   CHECK(estValide(corps));
   CHECK(nombreSolides(corps) == 1);
   CHECK(estValide(couvercle));
-  CHECK(contourDecale(p, p.boitier.jeu).size() > 50);
+  CHECK(contourDecale(p, d, p.boitier.jeu).size() > 50);
   const std::string dxf = dxfCarte(p, d);
   CHECK(dxf.find("\r\nARC\r\n") != std::string::npos);
   CHECK(svgCarte(p, d).find("<path") != std::string::npos);
@@ -120,4 +124,53 @@ TEST_CASE("Les hauteurs sont estimées d'après le nom des empreintes") {
   CHECK(hauteurEstimee("Capacitor_THT:CP_Radial_D10.0mm_P5.00mm") == Approx(16));
   CHECK(hauteurEstimee("Connector_USB:USB_C_Receptacle_GCT_USB4085") == Approx(3.3));
   CHECK(hauteurEstimee("Truc:Inconnu") == Approx(2));
+}
+
+TEST_CASE("Les composants qui débordent élargissent le boîtier autour d'eux, sans toucher au jeu") {
+  const Projet p = projetDepuisKicad(lireFichierKicad(donnee("StickHub.kicad_pcb")), "");
+  const Derive d = deriver(p);
+  REQUIRE_FALSE(d.debords.empty());  // J5 dépasse du contour dans KiCad
+  CHECK(p.boitier.jeu == Approx(1));
+  // Plus aucune erreur de débordement : la cavité contourne chaque composant avec le jeu.
+  for (const auto& q : verifier(p, d)) CHECK(q.code != "touche_paroi");
+  for (const auto& r : d.debords) {
+    CHECK(d.sdCavite(r.x1, r.y1) <= -p.boitier.jeu + 1e-6);
+    CHECK(d.sdCavite(r.x2, r.y2) <= -p.boitier.jeu + 1e-6);
+  }
+  const TopoDS_Shape corps = construireCorps(p, d);
+  CHECK(estValide(corps));
+  CHECK(nombreSolides(corps) == 1);
+  CHECK(estValide(construireCouvercle(p, d)));
+  // La paroi dessinée en 2D suit aussi l'élargissement.
+  const auto paroi = contourDecale(p, d, p.boitier.jeu + p.boitier.paroi);
+  double xmax = -1e9, ymax = -1e9;
+  for (const auto& q : paroi) { xmax = std::max(xmax, q.x); ymax = std::max(ymax, q.y); }
+  double rx = -1e9, ry = -1e9;
+  for (const auto& r : d.debords) { rx = std::max(rx, r.x2); ry = std::max(ry, r.y2); }
+  CHECK(std::max(xmax - rx, ymax - ry) >= p.boitier.jeu + p.boitier.paroi - 0.05);
+}
+
+TEST_CASE("La face arrière est importée et a ses propres vérifications") {
+  RapportImport r;
+  Projet p = projetDepuisKicad(lireFichierKicad(donnee("StickHub.kicad_pcb")), "", &r);
+  CHECK(r.dessous > 0);
+  const auto nDessous = std::count_if(p.composants.begin(), p.composants.end(), [](const Composant& k) { return k.dessous; });
+  CHECK(nDessous == r.dessous);
+  // Un composant de la face arrière plus haut que les entretoises touche le fond : erreur et correction.
+  for (auto& k : p.composants) if (k.dessous) { k.h = 7; break; }
+  auto pb = verifier(p, deriver(p));
+  REQUIRE(std::any_of(pb.begin(), pb.end(), [](const Probleme& q) { return q.code == "dessous_fond"; }));
+  double plusHaut = 0;
+  for (const auto& k : p.composants) if (k.dessous) plusHaut = std::max(plusHaut, k.h);
+  corrigerTout(p);
+  CHECK(p.boitier.entretoise == Approx(std::ceil((plusHaut + 0.5) * 2) / 2));
+  pb = verifier(p, deriver(p));
+  CHECK_FALSE(std::any_of(pb.begin(), pb.end(), [](const Probleme& q) { return q.code == "dessous_fond"; }));
+  // La face est enregistrée avec le projet.
+  const Projet q = normaliser(versJson(p));
+  CHECK(std::count_if(q.composants.begin(), q.composants.end(), [](const Composant& k) { return k.dessous; }) == nDessous);
+  // Les composants de la face arrière pendent sous la carte en 3D.
+  const Derive d = deriver(p);
+  for (const auto& g : d.comps)
+    if (g.dessous) { CHECK(encombrement(construireComposant(d, g)).zmax == Approx(d.zpb).margin(1e-6)); break; }
 }

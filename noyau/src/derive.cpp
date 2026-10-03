@@ -15,6 +15,8 @@ GeoComp geoComp(const Projet& p, const Derive& d, const Composant& k) {
   const auto& c = p.carte;
   GeoComp g;
   g.id = k.id; g.ref = k.ref; g.type = k.type; g.h = k.h; g.top = d.zpt + k.h; g.bord = k.bord; g.w = k.w; g.d = k.d;
+  g.dessous = k.dessous && !k.bord;
+  if (g.dessous) { g.top = d.zpb; g.bas = d.zpb - k.h; }
   if (k.bord) {
     const double jeu = p.boitier.jeu, u = leLongComposant(p, k);
     if (*k.bord == Bord::E || *k.bord == Bord::W) {
@@ -52,11 +54,11 @@ double hauteurIdeale(const Projet& p, const Derive& d) {
   const double base = b.entretoise + p.carte.t;
   double H = base + 1;
   for (const auto& g : d.comps) {
-    if (typeComposant(g.type)->bouton) continue;
+    if (typeComposant(g.type)->bouton || g.dessous) continue;
     H = std::max(H, base + g.h + (dansLevre(d, g) ? Levre::h + 0.3 : 0.5));
     if (g.decoupe) H = std::max(H, g.decoupe->zc + g.decoupe->h / 2 - d.zf + Levre::h + 0.2);
   }
-  for (const auto& g : d.comps) if (typeComposant(g.type)->bouton) H = std::max(H, base + g.h - b.couvercle);
+  for (const auto& g : d.comps) if (typeComposant(g.type)->bouton && !g.dessous) H = std::max(H, base + g.h - b.couvercle);
   return std::min(200.0, std::ceil(H * 2 - 1e-9) / 2);
 }
 
@@ -96,6 +98,12 @@ Derive deriver(const Projet& p) {
     d.trous.push_back(tp);
   }
   for (const auto& k : p.composants) d.comps.push_back(geoComp(p, d, k));
+  if (d.libre)
+    for (const auto& g : d.comps) {
+      if (g.bord) continue;
+      const double hors = std::max({d.forme.sd(g.x1, g.y1), d.forme.sd(g.x2, g.y1), d.forme.sd(g.x2, g.y2), d.forme.sd(g.x1, g.y2)});
+      if (hors > 0.01) d.debords.push_back({g.x1, g.y1, g.x2, g.y2});
+    }
   d.longVis = longueurVis(c.t, v);
   d.H = b.hauteurAuto ? borne(hauteurIdeale(p, d), b.entretoise + c.t + 1, 200) : b.hauteur;
   d.zt = d.zf + d.H; d.ztop = d.zt + b.couvercle; d.zLevre = d.zt - Levre::h;
@@ -151,12 +159,17 @@ double Derive::sdCarte(double x, double y) const {
   if (libre) return forme.sd(x, y);
   return sdRR(x, y, cx, cy, carteRR.hx, carteRR.hy, carteRR.r);
 }
+double Derive::sdEnveloppe(double x, double y) const {
+  double s = libre ? forme.sd(x, y) : sdRR(x, y, cx, cy, carteRR.hx, carteRR.hy, carteRR.r);
+  for (const auto& r : debords) s = std::min(s, sdRR(x, y, (r.x1 + r.x2) / 2, (r.y1 + r.y2) / 2, (r.x2 - r.x1) / 2, (r.y2 - r.y1) / 2, 0));
+  return s;
+}
 double Derive::sdCavite(double x, double y) const {
-  if (libre) return forme.sd(x, y) - jeu;
+  if (libre) return sdEnveloppe(x, y) - jeu;
   return sdRR(x, y, cx, cy, Li / 2, Wi / 2, ri);
 }
 double Derive::sdLevreInt(double x, double y) const {
-  if (libre) return forme.sd(x, y) - (jeu - Levre::jeu - Levre::ep);
+  if (libre) return sdEnveloppe(x, y) - (jeu - Levre::jeu - Levre::ep);
   return sdRR(x, y, cx, cy, li.hx, li.hy, li.r);
 }
 double Derive::bordCarte(Bord b, double u) const {

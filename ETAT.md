@@ -4,6 +4,8 @@ Mis à jour le 3 octobre 2026. Ce fichier est la mémoire du projet : chaque ses
 
 ## Où on en est
 
+Version 0.5 (lot 1.A), d'après le troisième essai. Les composants qui dépassent de la carte élargissent le boîtier localement autour d'eux, avec le jeu habituel : la carte entre toujours et ne repose que sur ses piliers, jamais sur un composant ; l'ancienne correction qui augmentait le jeu partout a disparu. La face arrière est importée de KiCad et se montre dans la vue Carte (boutons Dessus et Dessous, touche B), chaque composant a sa face dans le panneau, et la vue 3D peut rendre le boîtier transparent (touche T) pour voir sous la carte ; les composants du dessous ont leurs vérifications (fond trop proche, avec correction des entretoises, et piliers qui les heurtent). La sélection est en bleu franc, avec fond teinté et étiquette en 2D, et en bleu dans la 3D. Les ralentissements disparaissent : le boîtier et le couvercle se calculent et se maillent dans un fil à part, seuls les composants modifiés sont redessinés, et un recalcul complet d'une carte de 90 composants prend moins d'une milliseconde.
+
 Version 0.4, lot 1.A bien avancé : Prométhée importe une vraie carte KiCad et dessine un boîtier qui épouse son contour. Le menu Fichier, Importer une carte KiCad (Ctrl+I), lit le .kicad_pcb, reprend le contour Edge.Cuts (segments, arcs, cercles, découpes intérieures), les trous de fixation avec leur perçage, et les composants de la face avant avec leur encombrement ; les hauteurs sont estimées d'après le nom des empreintes. Les parois, la lèvre et le couvercle sont des décalages exacts du contour (OpenCascade), les découpes de connecteurs se posent au droit du bord réel, et les exports DXF et SVG reprennent le contour avec ses arcs. Les composants placés par KiCad peuvent se chevaucher et déborder de la carte sans fausse erreur ; un débordement qui touche la paroi propose d'augmenter le jeu. Les noms des pièces sont écrits sans accents dans le STEP. Vérifié sur deux cartes de démonstration de KiCad (préampli à lampe ECC83, contour rectangulaire avec quatre trous M3 ; StickHub, contour arrondi à encoche).
 
 Version 0.3.1 : rotation 3D libre sans butée, point du pavé numérique, verrou visible (panneau, barre d'outils, clic droit), dimensions des trous personnalisables, vis M5.
@@ -30,9 +32,13 @@ La rotation 3D est réécrite : glisser au bouton gauche fait tourner le modèle
 
 Inserts et vis faciles à régler, mais choix trop limité et sans personnalisation (traité en 0.3.1). Rotation de la caméra bloquée à certains angles, point essentiel (traité). Point du pavé numérique refusé (traité). Verrou introuvable (traité). Contraintes jugées sommaires : les cartes réelles ont des formes complexes, pas des rectangles ; c'est l'objet du lot suivant. Pas de logiciel de CAO payant pour vérifier les exports : utiliser FreeCAD, un trancheur gratuit, KiCad ou un visualiseur en ligne.
 
-## Rendez-vous en cours (version 0.4)
+## Rendez-vous en cours (version 0.5)
 
-Envoyer le contenu du zip sur le dépôt, puis dans le paquet Windows : importer une carte KiCad (des cartes libres se trouvent sur GitHub, par exemple les démonstrations de KiCad), regarder le boîtier épouser le contour, corriger les hauteurs estimées des grands composants, exporter et vérifier le STL dans un trancheur et le STEP dans FreeCAD.
+Envoyer le contenu du zip, puis dans le paquet Windows : réimporter la carte de l'essai précédent et vérifier que le boîtier contourne les composants qui dépassent, passer en face arrière (B), rendre le boîtier transparent (T), sélectionner des composants dans les deux vues, agrandir une carte en regardant la fluidité.
+
+## Retours du troisième essai (version 0.4, 3 octobre 2026)
+
+Import KiCad réussi. Sélection peu visible (traité en 0.5). Ralentissements en agrandissant la carte (traité). Face arrière introuvable (traité : elle n'était pas importée). Composants qui dépassent de la carte mal pris en compte : soit la carte n'entre pas, soit elle s'appuie sur ses composants (traité : le boîtier s'élargit localement autour d'eux).
 
 ## Suite du lot 1.A
 

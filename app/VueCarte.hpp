@@ -14,6 +14,8 @@ class VueCarte : public QWidget {
 public:
   explicit VueCarte(Document* doc, QWidget* parent = nullptr);
   void recadrer();
+  void setFaceArriere(bool dessous);  // montre et édite la face arrière (vue par transparence depuis le dessus)
+  bool faceArriere() const { return m_dessous; }
   void garderEnVue();
   QSize sizeHint() const override { return {640, 480}; }
 
@@ -58,6 +60,7 @@ private:
   bool m_bouge = false;
   Touche m_survol;
   Touche m_cibleMenu;
+  bool m_dessous = false;
   std::string m_cleParois;
   std::vector<prom::Point> m_paroiInt, m_paroiExt;
 };

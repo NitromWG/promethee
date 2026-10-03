@@ -344,6 +344,8 @@ Projet normaliser(const Json& s) {
       o.verrou = jverrou.is_boolean() && jverrou.get<bool>();
       const Json& jorigine = champ(k, "origine");
       if (jorigine.is_string() && jorigine.get<std::string>() == "kicad") o.origine = "kicad";
+      const Json& jface = champ(k, "face");
+      o.dessous = !o.bord && jface.is_string() && jface.get<std::string>() == "dessous";
       p.composants.push_back(o);
     }
   }
@@ -412,6 +414,7 @@ Json versJson(const Projet& p) {
     }
     if (k.verrou) o["verrou"] = true;
     if (!k.origine.empty()) o["origine"] = k.origine;
+    if (k.dessous) o["face"] = "dessous";
     j["composants"].push_back(o);
   }
   return j;

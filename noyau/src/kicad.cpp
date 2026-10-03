@@ -321,15 +321,15 @@ Projet projetDepuisKicad(const CarteKicad& k, const std::string& nom, RapportImp
       ++r.trous;
       continue;
     }
-    if (f.dessous) { ++r.dessous; continue; }
     if (f.ref.empty() || f.ref[0] == '#' || f.xmax - f.xmin < 0.05) continue;
     const std::string n = minuscules(f.nom);
     const double x1 = f.xmin + dx, x2 = f.xmax + dx, y1 = f.ymin + dy, y2 = f.ymax + dy;
     const double cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, w = x2 - x1, d = y2 - y1;
     Json jk = {{"ref", f.ref}, {"valeur", f.valeur}, {"h", hauteurEstimee(f.nom)}, {"origine", "kicad"}};
+    if (f.dessous) { jk["face"] = "dessous"; ++r.dessous; }
     const bool usbc = contient(n, {"usb_c", "usb-c", "type-c", "typec"});
     const bool jack = contient(n, {"barreljack", "barrel_jack", "dc_jack"});
-    if (usbc || jack) {
+    if ((usbc || jack) && !f.dessous) {
       // Connecteur de bord : rattaché au côté le plus proche de l'encombrement de la carte.
       const double dE = L / 2 - x2, dW = x1 + L / 2, dN = W / 2 - y2, dS = y1 + W / 2;
       const double m = std::min({dE, dW, dN, dS});

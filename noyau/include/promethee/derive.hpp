@@ -32,6 +32,8 @@ struct GeoComp {
   double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
   std::optional<DecoupeMur> decoupe;
   std::optional<Percage> trouCouvercle;
+  bool dessous = false;       // face arrière : occupe la hauteur sous la carte
+  double bas = 0;             // face arrière : point le plus bas
 };
 
 // Forme réelle d'une carte libre, discrétisée pour les calculs de distance.
@@ -71,6 +73,10 @@ struct Derive {
   double jeu = 0;
   RectArrondi carteRR;
   FormeCarte forme;
+  // Composants qui débordent d'une carte libre : le boîtier s'élargit autour d'eux.
+  struct RectDebord { double x1, y1, x2, y2; };
+  std::vector<RectDebord> debords;
+  double sdEnveloppe(double x, double y) const;  // distance à la carte élargie de ses débords
   double sdCarte(double x, double y) const;     // distance signée au bord de la carte
   double sdCavite(double x, double y) const;    // à la face intérieure des parois
   double sdLevreInt(double x, double y) const;  // au bord intérieur de la lèvre du couvercle
