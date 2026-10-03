@@ -23,6 +23,7 @@
 #include "Vue3D.hpp"
 #include "VueCarte.hpp"
 #include "promethee/geometrie.hpp"
+#include "promethee/kicad.hpp"
 #include "promethee/placement.hpp"
 
 using namespace prom;
@@ -87,6 +88,7 @@ FenetrePrincipale::FenetrePrincipale() : m_doc(new Document(this)) {
     const QString chemin = QFileDialog::getOpenFileName(this, QStringLiteral("Ouvrir un projet"), QString(), QStringLiteral("Projets Prométhée (*.json)"));
     if (!chemin.isEmpty()) ouvrirFichier(chemin);
   });
+  fichier->addAction(QStringLiteral("&Importer une carte KiCad…"), QKeySequence(Qt::CTRL | Qt::Key_I), this, [this] { importerKicad(); });
   fichier->addAction(QStringLiteral("&Enregistrer"), QKeySequence::Save, this, [this] { enregistrer(false); });
   fichier->addAction(QStringLiteral("Enregistrer &sous…"), QKeySequence::SaveAs, this, [this] { enregistrer(true); });
   fichier->addSeparator();
@@ -136,7 +138,7 @@ FenetrePrincipale::FenetrePrincipale() : m_doc(new Document(this)) {
   QMenu* aide = menuBar()->addMenu(QStringLiteral("Ai&de"));
   aide->addAction(QStringLiteral("À propos de Prométhée"), this, [this] {
     QMessageBox::about(this, QStringLiteral("À propos de Prométhée"),
-                       QStringLiteral("<h3>Prométhée 0.3</h3><p>Plateforme libre d’ingénierie intégrée : la carte électronique et son boîtier forment un seul modèle.</p>"
+                       QStringLiteral("<h3>Prométhée 0.4</h3><p>Plateforme libre d’ingénierie intégrée : la carte électronique et son boîtier forment un seul modèle.</p>"
                                       "<p>Vue Carte : glisser un composant, un trou ou une poignée du bord de la carte, molette pour zoomer, double-clic pour pivoter. "
                                       "Vue Boîtier : bouton gauche pour tourner, droit pour déplacer, molette pour zoomer.</p>"
                                       "<p>Licence GPL-3.0. Géométrie : Open CASCADE Technology. Interface : Qt.</p><pre>%1</pre>")
@@ -147,6 +149,27 @@ FenetrePrincipale::FenetrePrincipale() : m_doc(new Document(this)) {
   barre->setObjectName(QStringLiteral("principale"));
   barre->addAction(annuler);
   barre->addAction(retablir);
+  barre->addSeparator();
+  QAction* verrouiller = barre->addAction(QStringLiteral("Verrouiller"));
+  verrouiller->setCheckable(true);
+  verrouiller->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
+  verrouiller->setToolTip(QStringLiteral("Verrouiller la position du composant sélectionné (Ctrl+L)"));
+  connect(verrouiller, &QAction::triggered, this, [this](bool on) {
+    const Cible s = m_doc->selection();
+    if (s.type != Cible::Composant) return;
+    m_doc->modifier([&](Projet& p) { for (auto& k : p.composants) if (k.id == s.id) k.verrou = on; });
+  });
+  auto majVerrou = [this, verrouiller] {
+    const Composant* k = m_doc->composantSelectionne();
+    verrouiller->setEnabled(k != nullptr);
+    verrouiller->setChecked(k && k->verrou);
+    verrouiller->setText(k && k->verrou ? QStringLiteral("Verrouillé") : QStringLiteral("Verrouiller"));
+  };
+  connect(m_doc, &Document::selectionChangee, this, majVerrou);
+  connect(m_doc, &Document::change, this, majVerrou);
+  majVerrou();
+  edition->addSeparator();
+  edition->addAction(verrouiller);
   barre->addSeparator();
   QAction* exporter = barre->addAction(QStringLiteral("Dossier de fabrication"));
   connect(exporter, &QAction::triggered, this, [this] { exporterDossier(); });
@@ -213,6 +236,33 @@ bool FenetrePrincipale::confirmerAbandon() {
 void FenetrePrincipale::closeEvent(QCloseEvent* e) {
   if (confirmerAbandon()) e->accept();
   else e->ignore();
+}
+
+void FenetrePrincipale::importerKicad() {
+  if (!confirmerAbandon()) return;
+  const QString chemin = QFileDialog::getOpenFileName(this, QStringLiteral("Importer une carte KiCad"), QString(), QStringLiteral("Cartes KiCad (*.kicad_pcb)"));
+  if (!chemin.isEmpty()) importerFichierKicad(chemin, true);
+}
+
+void FenetrePrincipale::importerFichierKicad(const QString& chemin, bool messages) {
+  try {
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    RapportImport r;
+    const Projet p = projetDepuisKicad(lireFichierKicad(std::filesystem::path(chemin.toStdU16String()).string()), QFileInfo(chemin).completeBaseName().toStdString(), &r);
+    m_doc->remplacer(p);
+    m_doc->selectionner({});
+    m_carte->recadrer();
+    m_vue3d->recadrer();
+    QApplication::restoreOverrideCursor();
+    if (!messages) return;
+    QString texte = QStringLiteral("Carte importée : contour réel, %1 trous de fixation, %2 composants dont %3 connecteurs de bord.").arg(r.trous).arg(r.composants).arg(r.connecteursBord);
+    if (r.dessous) texte += QStringLiteral("\n%1 composants de la face arrière ne sont pas encore pris en compte.").arg(r.dessous);
+    texte += QStringLiteral("\n\nLes hauteurs des composants sont estimées d’après le nom de leur empreinte : vérifie les plus hauts dans le panneau.");
+    QMessageBox::information(this, QStringLiteral("Import KiCad"), texte);
+  } catch (const std::exception& e) {
+    QApplication::restoreOverrideCursor();
+    QMessageBox::warning(this, QStringLiteral("Import impossible"), QString::fromUtf8(e.what()));
+  }
 }
 
 void FenetrePrincipale::exporterDossier() {

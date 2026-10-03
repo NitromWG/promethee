@@ -3,6 +3,7 @@
 
 #include <optional>
 
+#include <QPainterPath>
 #include <QPointF>
 #include <QWidget>
 
@@ -40,6 +41,10 @@ private:
   void deplacer(prom::Projet& p, const Touche& t, double x, double y, bool fin) const;
   void redimensionner(prom::Projet& p, char bord, double delta, const prom::Carte& depart) const;
   bool verrouille(const std::string& id) const;
+  QPainterPath chemin(const std::vector<prom::Point>& poly) const;
+  QPainterPath cheminCarte() const;
+  void actualiserParois();
+  void menuContextuel(const QPoint& ou);
 
   Document* m_doc;
   double m_s = 6, m_ox = 0, m_oy = 0;
@@ -52,4 +57,7 @@ private:
   double m_oxDepart = 0, m_oyDepart = 0;
   bool m_bouge = false;
   Touche m_survol;
+  Touche m_cibleMenu;
+  std::string m_cleParois;
+  std::vector<prom::Point> m_paroiInt, m_paroiExt;
 };

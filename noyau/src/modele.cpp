@@ -17,7 +17,7 @@ namespace prom {
 namespace {
 const std::vector<std::pair<std::string, Vis>>& tableVis() {
   static const std::vector<std::pair<std::string, Vis>> t = {
-      {"M2", {2.0, 2.2, 1.6, 3.8}}, {"M2.5", {2.5, 2.7, 2.0, 4.5}}, {"M3", {3.0, 3.2, 2.5, 5.5}}, {"M4", {4.0, 4.3, 3.3, 7.0}}};
+      {"M2", {2.0, 2.2, 1.6, 3.8}}, {"M2.5", {2.5, 2.7, 2.0, 4.5}}, {"M3", {3.0, 3.2, 2.5, 5.5}}, {"M4", {4.0, 4.3, 3.3, 7.0}}, {"M5", {5.0, 5.3, 4.2, 8.5}}};
   return t;
 }
 }  // namespace
@@ -31,12 +31,12 @@ const Vis& vis(const std::string& nom) {
   return tableVis()[2].second;  // M3 par défaut
 }
 const std::vector<std::string>& nomsVis() {
-  static const std::vector<std::string> n = {"M2", "M2.5", "M3", "M4"};
+  static const std::vector<std::string> n = {"M2", "M2.5", "M3", "M4", "M5"};
   return n;
 }
 
 const Insert& insert(const std::string& nomVis) {
-  static const std::vector<std::pair<std::string, Insert>> t = {{"M2", {3.2, 4.0}}, {"M2.5", {3.6, 5.7}}, {"M3", {4.0, 5.7}}, {"M4", {5.6, 8.1}}};
+  static const std::vector<std::pair<std::string, Insert>> t = {{"M2", {3.2, 4.0}}, {"M2.5", {3.6, 5.7}}, {"M3", {4.0, 5.7}}, {"M4", {5.6, 8.1}}, {"M5", {6.4, 9.5}}};
   for (const auto& [n, i] : t) if (n == nomVis) return i;
   return t[2].second;
 }
@@ -58,6 +58,7 @@ const std::vector<TypeComposant>& typesComposants() {
     x = {}; x.cle = "bouton"; x.nom = "Bouton poussoir"; x.prefixe = "SW"; x.w = 6; x.d = 6; x.h = 13; x.couvercle = 4.2; x.bouton = true;
     x.valeur = "6 × 6 mm, tige de 13 mm"; ajout(x);
     x = {}; x.cle = "condo"; x.nom = "Condensateur"; x.prefixe = "C"; x.w = 6.3; x.d = 6.3; x.h = 7.7; x.rond = true; x.valeur = "100 µF 16 V"; ajout(x);
+    x = {}; x.cle = "generique"; x.nom = "Composant"; x.prefixe = "U"; x.w = 5; x.d = 5; x.h = 2; x.valeur = ""; ajout(x);
     return v;
   }();
   return t;
@@ -197,6 +198,33 @@ Projet normaliser(const Json& s) {
   p.carte.W = borne(nombre(champ(c, "W"), 40), 10, 300);
   p.carte.t = std::find(EPAISSEURS_PCB.begin(), EPAISSEURS_PCB.end(), t0) != EPAISSEURS_PCB.end() ? t0 : 1.6;
   p.carte.r = borne(nombre(champ(c, "r"), 2), 0, std::min(p.carte.L, p.carte.W) / 2 - 0.5);
+  const Json& jcontours = champ(c, "contours");
+  if (jcontours.is_array()) {
+    auto point = [](const Json& v, Point& q) {
+      if (!v.is_array() || v.size() != 2 || !v[0].is_number() || !v[1].is_number()) return false;
+      q = {v[0].get<double>(), v[1].get<double>()};
+      return std::isfinite(q.x) && std::isfinite(q.y);
+    };
+    for (const auto& jc : jcontours) {
+      Contour k;
+      bool valide = champ(jc, "elements").is_array();
+      if (valide)
+        for (const auto& je : champ(jc, "elements")) {
+          ElementContour e;
+          if (!point(champ(je, "debut"), e.debut) || !point(champ(je, "fin"), e.fin)) { valide = false; break; }
+          Point mil{};
+          if (point(champ(je, "milieu"), mil)) e.milieu = mil;
+          k.elements.push_back(e);
+        }
+      if (!valide || k.elements.size() < 2) continue;
+      k.ferme = std::hypot(k.elements.front().debut.x - k.elements.back().fin.x, k.elements.front().debut.y - k.elements.back().fin.y) < 1e-3;
+      if (k.ferme && std::abs(k.aire()) > 1) p.carte.contours.push_back(k);
+    }
+    if (!p.carte.contours.empty()) {
+      orienterContours(p.carte.contours);
+      recalerEncombrement(p.carte);
+    }
+  }
 
   auto& bo = p.boitier;
   bo.jeu = borne(nombre(champ(b, "jeu"), 1), 0.2, 10);
@@ -248,6 +276,17 @@ Projet normaliser(const Json& s) {
       if (jv.is_string() && visConnue(jv.get<std::string>())) o.vis = jv.get<std::string>();
       const Json& jf = champ(t, "fixation");
       if (jf.is_string() && jf.get<std::string>() == "insert") o.fixation = "insert";
+      const Json& dims = champ(t, "dimensions");
+      auto dimension = [&dims](const char* cle, double a, double b) -> std::optional<double> {
+        const Json& v = champ(dims, cle);
+        if (!v.is_number()) return std::nullopt;
+        return borne(v.get<double>(), a, b);
+      };
+      o.diamTrou = dimension("trou", 0.5, 20);
+      o.diamPastille = dimension("pastille", 1, 30);
+      o.diamPilier = dimension("pilier", 2, 40);
+      o.diamLogement = dimension("logement", 0.5, 30);
+      o.longueurInsert = dimension("insert", 1, 30);
       p.trous.push_back(o);
     }
   }
@@ -303,6 +342,8 @@ Projet normaliser(const Json& s) {
       }
       const Json& jverrou = champ(k, "verrou");
       o.verrou = jverrou.is_boolean() && jverrou.get<bool>();
+      const Json& jorigine = champ(k, "origine");
+      if (jorigine.is_string() && jorigine.get<std::string>() == "kicad") o.origine = "kicad";
       p.composants.push_back(o);
     }
   }
@@ -317,6 +358,19 @@ Json versJson(const Projet& p) {
   j["version"] = 1;
   j["nom"] = p.nom;
   j["carte"] = {{"x0", p.carte.x0}, {"y0", p.carte.y0}, {"L", p.carte.L}, {"W", p.carte.W}, {"r", p.carte.r}, {"t", p.carte.t}};
+  if (p.carte.libre()) {
+    Json contours = Json::array();
+    for (const auto& k : p.carte.contours) {
+      Json elements = Json::array();
+      for (const auto& e : k.elements) {
+        Json je = {{"debut", {e.debut.x, e.debut.y}}, {"fin", {e.fin.x, e.fin.y}}};
+        if (e.milieu) je["milieu"] = {e.milieu->x, e.milieu->y};
+        elements.push_back(je);
+      }
+      contours.push_back({{"elements", elements}});
+    }
+    j["carte"]["contours"] = contours;
+  }
   const auto& b = p.boitier;
   j["boitier"] = {{"jeu", b.jeu}, {"paroi", b.paroi}, {"fond", b.fond}, {"entretoise", b.entretoise},
                   {"hauteur", b.hauteur}, {"couvercle", b.couvercle}, {"vis", b.vis}, {"hauteurAuto", b.hauteurAuto}};
@@ -328,6 +382,13 @@ Json versJson(const Projet& p) {
     if (t.ancrage != "auto") o["ancrage"] = t.ancrage;
     if (t.vis) o["vis"] = *t.vis;
     if (t.fixation != "autotaraudeuse") o["fixation"] = t.fixation;
+    Json dims = Json::object();
+    if (t.diamTrou) dims["trou"] = *t.diamTrou;
+    if (t.diamPastille) dims["pastille"] = *t.diamPastille;
+    if (t.diamPilier) dims["pilier"] = *t.diamPilier;
+    if (t.diamLogement) dims["logement"] = *t.diamLogement;
+    if (t.longueurInsert) dims["insert"] = *t.longueurInsert;
+    if (!dims.empty()) o["dimensions"] = dims;
     j["trous"].push_back(o);
   }
   j["composants"] = Json::array();
@@ -350,6 +411,7 @@ Json versJson(const Projet& p) {
       if (!k.bord) o["ay"] = k.ay;
     }
     if (k.verrou) o["verrou"] = true;
+    if (!k.origine.empty()) o["origine"] = k.origine;
     j["composants"].push_back(o);
   }
   return j;

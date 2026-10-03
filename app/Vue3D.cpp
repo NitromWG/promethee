@@ -93,10 +93,9 @@ Vue3D::Vue3D(Document* doc, QWidget* parent) : QOpenGLWidget(parent), m_doc(doc)
 #endif
   m_vue->SetBgGradientColors(rgb(0xF6, 0xF8, 0xF7), rgb(0xD5, 0xDC, 0xD8), Aspect_GFM_VER, false);
   m_vue->SetProj(V3d_XnegYnegZpos);
-  // Gauche : tourner autour ; droit ou milieu : déplacer ; molette : zoomer.
+  // Gauche : tourner (géré par Vue3D::tourner) ; droit ou milieu : déplacer ; molette : zoomer.
   auto& gestes = ChangeMouseGestureMap();
   gestes.Clear();
-  gestes.Bind(Aspect_VKeyMouse_LeftButton, AIS_MouseGesture_RotateOrbit);
   gestes.Bind(Aspect_VKeyMouse_RightButton, AIS_MouseGesture_Pan);
   gestes.Bind(Aspect_VKeyMouse_MiddleButton, AIS_MouseGesture_Pan);
   // Cube de vue : un clic sur une face, une arête ou un coin amène la vue correspondante, en douceur.
@@ -193,13 +192,66 @@ bool Vue3D::transmettreSouris(QMouseEvent* e) {
 
 void Vue3D::mousePressEvent(QMouseEvent* e) {
   setFocus();
+  if (e->button() == Qt::LeftButton) {
+    // Pivot : centre du boîtier affiché, comme SolidWorks qui tourne autour du modèle.
+    const Derive& d = m_doc->derive();
+    const double leve = m_modeCouvercle == Couvercle::Souleve ? std::max(16.0, 0.42 * std::max(d.Lo, d.Wo)) : 0.0;
+    m_pivot = gp_Pnt(d.cx, d.cy, (d.ztop + leve) / 2);
+    m_rotation = {true, false, e->position(), e->position()};
+    return;
+  }
   if (transmettreSouris(e)) update();
 }
+
 void Vue3D::mouseReleaseEvent(QMouseEvent* e) {
+  if (e->button() == Qt::LeftButton && m_rotation.actif) {
+    m_rotation.actif = false;
+    if (!m_rotation.bouge) cliquer(e->position(), e->modifiers());  // simple clic : sélection, ou cube de vue
+    return;
+  }
   if (transmettreSouris(e)) update();
 }
+
 void Vue3D::mouseMoveEvent(QMouseEvent* e) {
+  if (m_rotation.actif && (e->buttons() & Qt::LeftButton)) {
+    if (!m_rotation.bouge && (e->position() - m_rotation.depart).manhattanLength() < 3) return;
+    m_rotation.bouge = true;
+    tourner(e->position().x() - m_rotation.dernier.x(), e->position().y() - m_rotation.dernier.y());
+    m_rotation.dernier = e->position();
+    return;
+  }
   if (transmettreSouris(e)) update();
+}
+
+// Rotation libre : glisser horizontalement tourne autour de l'axe vertical de l'écran, verticalement autour
+// de son axe horizontal. Le haut de la caméra tourne avec elle : aucune butée, on peut passer par-dessus le modèle.
+void Vue3D::tourner(double dx, double dy) {
+  if (m_vue.IsNull()) return;
+  const Handle(Graphic3d_Camera)& cam = m_vue->Camera();
+  const gp_Dir haut = cam->Up(), visee = cam->Direction();
+  const gp_Dir droite = visee.Crossed(haut);
+  const double k = 0.0075;  // radians par pixel
+  gp_Trsf autourHaut, autourDroite;
+  autourHaut.SetRotation(gp_Ax1(m_pivot, haut), -dx * k);
+  autourDroite.SetRotation(gp_Ax1(m_pivot, droite), -dy * k);
+  const gp_Trsf t = autourDroite.Multiplied(autourHaut);
+  cam->SetEyeAndCenter(cam->Eye().Transformed(t), cam->Center().Transformed(t));
+  cam->SetUp(haut.Transformed(t));
+  cam->OrthogonalizeUp();
+  m_vue->Invalidate();
+  update();
+}
+
+void Vue3D::cliquer(const QPointF& position, Qt::KeyboardModifiers modificateurs) {
+  if (m_vue.IsNull() || m_vue->Window().IsNull()) return;
+  const double r = devicePixelRatioF();
+  const NCollection_Vec2<int> pt(static_cast<int>(position.x() * r + 0.5), static_cast<int>(position.y() * r + 0.5));
+  Aspect_VKeyFlags drapeaux = Aspect_VKeyFlags_NONE;
+  if (modificateurs & Qt::ShiftModifier) drapeaux |= Aspect_VKeyFlags_SHIFT;
+  if (modificateurs & Qt::ControlModifier) drapeaux |= Aspect_VKeyFlags_CTRL;
+  UpdateMouseButtons(pt, Aspect_VKeyMouse_LeftButton, drapeaux, false);
+  UpdateMouseButtons(pt, Aspect_VKeyMouse_NONE, drapeaux, false);
+  update();
 }
 void Vue3D::wheelEvent(QWheelEvent* e) {
   if (m_vue.IsNull() || m_vue->Window().IsNull()) return;
@@ -241,18 +293,20 @@ void Vue3D::reconstruire() {
       m_ctx->Redisplay(objet, false);
     }
   };
-  std::ostringstream valides;
+  std::ostringstream valides, forme;
+  for (const auto& k : p.carte.contours)
+    for (const auto& e : k.elements) forme << e.debut.x << ',' << e.debut.y << (e.milieu ? 'a' : 'l') << ';';
   for (const auto& [mur, liste] : decoupesValides(d))
     for (const auto& o : liste) valides << lettre(mur) << o.s << ',' << o.t << ',' << o.w << ',' << o.h << ',' << o.r << ';';
   for (const auto& q : piliersValides(d)) valides << q.x << ',' << q.y << ',' << q.Rb << ',' << q.rp << ';';
-  const std::string sc = signature(d.Lo, d.Wo, d.ro, d.Li, d.Wi, d.ri, d.zf, d.zt, d.zpb, d.Rb, d.rp, d.cx, d.cy, p.boitier.paroi, valides.str());
+  const std::string sc = signature(d.Lo, d.Wo, d.ro, d.Li, d.Wi, d.ri, d.zf, d.zt, d.zpb, d.Rb, d.rp, d.cx, d.cy, p.boitier.paroi, valides.str(), forme.str());
   if (sc != m_sigCorps) {
     m_sigCorps = sc;
     afficher(m_corps, construireCorps(p, d), rgb(0xD3, 0xD8, 0xD4));
   }
   std::ostringstream percages;
   for (const auto& o : percagesValides(d)) percages << o.x << ',' << o.y << ',' << o.d << ';';
-  const std::string sl = signature(d.Lo, d.Wo, d.ro, d.lo.hx, d.lo.hy, d.li.hx, d.li.hy, d.zt, d.ztop, d.cx, d.cy, percages.str());
+  const std::string sl = signature(d.Lo, d.Wo, d.ro, d.lo.hx, d.lo.hy, d.li.hx, d.li.hy, d.zt, d.ztop, d.cx, d.cy, percages.str(), forme.str());
   if (sl != m_sigCouvercle) {
     m_sigCouvercle = sl;
     afficher(m_couvercle, construireCouvercle(p, d), rgb(0xD9, 0xDD, 0xD9));
@@ -261,7 +315,7 @@ void Vue3D::reconstruire() {
   placerCouvercle();
   std::ostringstream trous;
   for (const auto& t : d.trous) trous << t.x << ',' << t.y << ',' << t.vis.trou << ';';
-  const std::string sp = signature(p.carte.x0, p.carte.y0, p.carte.L, p.carte.W, p.carte.r, p.carte.t, d.zpb, d.vis.trou, trous.str());
+  const std::string sp = signature(p.carte.x0, p.carte.y0, p.carte.L, p.carte.W, p.carte.r, p.carte.t, d.zpb, d.vis.trou, trous.str(), forme.str());
   if (sp != m_sigCarte) {
     m_sigCarte = sp;
     afficher(m_carte, construireCarte(p, d), rgb(0x2E, 0x6A, 0x50));

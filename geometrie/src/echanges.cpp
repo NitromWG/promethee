@@ -257,6 +257,25 @@ std::string dxfCarte(const Projet& p, const Derive& d) {
   g(0, "ENDTAB"); g(0, "ENDSEC");
   g(0, "SECTION"); g(2, "ENTITIES");
   const double r = c.r, L = c.L, W = c.W;
+  if (c.libre()) {
+    // Contour réel : segments et arcs (DXF : arcs dans le sens direct, angles en degrés).
+    for (const auto& k : c.contours)
+      for (const auto& el : k.elements) {
+        const double x1 = el.debut.x - ox, y1 = el.debut.y - oy, x2 = el.fin.x - ox, y2 = el.fin.y - oy;
+        if (!el.milieu) { ligne("CONTOUR", x1, y1, x2, y2); continue; }
+        const double xm = el.milieu->x - ox, ym = el.milieu->y - oy;
+        const double dd = 2 * (x1 * (ym - y2) + xm * (y2 - y1) + x2 * (y1 - ym));
+        if (std::abs(dd) < 1e-12) { ligne("CONTOUR", x1, y1, x2, y2); continue; }
+        const double a2 = x1 * x1 + y1 * y1, b2 = xm * xm + ym * ym, c2 = x2 * x2 + y2 * y2;
+        const double cx = (a2 * (ym - y2) + b2 * (y2 - y1) + c2 * (y1 - ym)) / dd, cy = (a2 * (x2 - xm) + b2 * (x1 - x2) + c2 * (xm - x1)) / dd;
+        const double rr = std::hypot(x1 - cx, y1 - cy);
+        auto angle = [&](double x, double y) { double a = std::atan2(y - cy, x - cx) * 180 / 3.14159265358979323846; return a < 0 ? a + 360 : a; };
+        const double a0 = angle(x1, y1), am = angle(xm, ym), a1 = angle(x2, y2);
+        auto dans = [](double a, double de, double vers) { const double balayage = std::fmod(vers - de + 360, 360); return std::fmod(a - de + 360, 360) <= balayage; };
+        if (dans(am, a0, a1)) arc("CONTOUR", cx, cy, rr, a0, a1);
+        else arc("CONTOUR", cx, cy, rr, a1, a0);
+      }
+  } else
   if (r > 1e-6) {
     ligne("CONTOUR", r, 0, L - r, 0); arc("CONTOUR", L - r, r, r, 270, 360);
     ligne("CONTOUR", L, r, L, W - r); arc("CONTOUR", L - r, W - r, r, 0, 90);
@@ -283,8 +302,19 @@ std::string svgCarte(const Projet& p, const Derive& d) {
   s << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << nombre(Lt, 2) << "mm\" height=\"" << nombre(Wt, 2)
     << "mm\" viewBox=\"0 0 " << nombre(Lt, 2) << ' ' << nombre(Wt, 2) << "\" font-family=\"Arial, sans-serif\">\n"
     << " <title>" << p.nom << " : plan de la carte</title>\n <rect width=\"100%\" height=\"100%\" fill=\"#fff\"/>\n"
-    << " <rect x=\"" << nombre(marge, 3) << "\" y=\"" << nombre(marge, 3) << "\" width=\"" << nombre(c.L, 3) << "\" height=\"" << nombre(c.W, 3) << "\" rx=\"" << nombre(c.r, 3)
-    << "\" fill=\"#2e6a50\" fill-opacity=\"0.12\" stroke=\"#1e4c38\" stroke-width=\"0.25\"/>\n";
+    ;
+  if (c.libre()) {
+    s << " <path fill-rule=\"evenodd\" fill=\"#2e6a50\" fill-opacity=\"0.12\" stroke=\"#1e4c38\" stroke-width=\"0.25\" d=\"";
+    for (const auto& k : c.contours) {
+      const auto poly = k.polygone(0.2);
+      for (size_t i = 0; i < poly.size(); ++i) s << (i ? " L" : " M") << X(poly[i].x) << ' ' << Y(poly[i].y);
+      s << " Z";
+    }
+    s << "\"/>\n";
+  } else {
+    s << " <rect x=\"" << nombre(marge, 3) << "\" y=\"" << nombre(marge, 3) << "\" width=\"" << nombre(c.L, 3) << "\" height=\"" << nombre(c.W, 3) << "\" rx=\"" << nombre(c.r, 3)
+      << "\" fill=\"#2e6a50\" fill-opacity=\"0.12\" stroke=\"#1e4c38\" stroke-width=\"0.25\"/>\n";
+  }
   for (const auto& k : d.comps)
     s << " <rect x=\"" << X(k.x1) << "\" y=\"" << Y(k.y2) << "\" width=\"" << nombre(k.x2 - k.x1, 3) << "\" height=\"" << nombre(k.y2 - k.y1, 3)
       << "\" fill=\"none\" stroke=\"#56645d\" stroke-width=\"0.18\"/>\n <text x=\"" << X(k.x) << "\" y=\"" << Y(k.y) << "\" font-size=\"1.6\" text-anchor=\"middle\" dominant-baseline=\"middle\" fill=\"#18211d\">" << k.ref << "</text>\n";

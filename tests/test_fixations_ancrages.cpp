@@ -182,3 +182,26 @@ TEST_CASE("Les pièces s'exportent dans de nombreux formats") {
   std::error_code ec;
   fs::remove_all(dossier, ec);
 }
+
+TEST_CASE("Les dimensions d'un trou se personnalisent et reviennent au standard") {
+  Projet p = exemple();
+  Trou& t = trou(p, "T3");
+  t.vis = "M5";
+  t.fixation = "insert";
+  CHECK(place(deriver(p), "T3").rp == Approx(insert("M5").trou / 2));
+  t.diamPilier = 11;
+  t.diamLogement = 6.0;
+  t.longueurInsert = 4;
+  t.diamTrou = 5.5;
+  const Derive d = deriver(p);
+  CHECK(place(d, "T3").Rb == Approx(5.5));
+  CHECK(place(d, "T3").rp == Approx(3.0));
+  CHECK(place(d, "T3").longInsert == Approx(4));
+  CHECK(place(d, "T3").vis.trou == Approx(5.5));
+  const Projet q = normaliser(versJson(p));
+  CHECK(q.trous[2].diamPilier == std::optional<double>(11));
+  CHECK(versJson(q) == versJson(p));
+  CHECK(estValide(construireCorps(q, deriver(q))));
+  t.diamPilier.reset(); t.diamLogement.reset(); t.longueurInsert.reset(); t.diamTrou.reset();
+  CHECK(versJson(p)["trous"][2].contains("dimensions") == false);
+}

@@ -14,6 +14,7 @@ class FenetrePrincipale : public QMainWindow {
 public:
   FenetrePrincipale();
   void ouvrirFichier(const QString& chemin);
+  void importerFichierKicad(const QString& chemin, bool messages);
   Document* document() const { return m_doc; }
   VueCarte* vueCarte() const { return m_carte; }
   Vue3D* vue3D() const { return m_vue3d; }
@@ -25,6 +26,7 @@ private:
   bool confirmerAbandon();
   bool enregistrer(bool sousNouveauNom);
   void exporterDossier();
+  void importerKicad();
   void majEtat();
 
   Document* m_doc;

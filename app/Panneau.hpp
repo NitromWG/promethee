@@ -40,4 +40,5 @@ private:
   QTableWidget* m_nomen = nullptr;
   std::vector<std::function<void()>> m_synchros;
   Cible m_cibleConstruite{Cible::Aucune, "?"};
+  bool m_carteLibre = false;
 };

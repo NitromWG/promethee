@@ -20,6 +20,7 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include "ChampNombre.hpp"
 #include "promethee/derive.hpp"
 #include "promethee/nomenclature.hpp"
 
@@ -96,7 +97,7 @@ Panneau::Panneau(Document* doc, QWidget* parent) : QTabWidget(parent), m_doc(doc
   });
   connect(doc, &Document::selectionChangee, this, [this] { construireProprietes(); });
   connect(doc, &Document::change, this, [this] {
-    if (m_doc->selection() != m_cibleConstruite) construireProprietes();
+    if (m_doc->selection() != m_cibleConstruite || m_doc->projet().carte.libre() != m_carteLibre) construireProprietes();
     else synchroniser();
     majVerifications();
     majNomenclature();
@@ -116,7 +117,7 @@ QFormLayout* Panneau::groupe(QVBoxLayout* colonne, const QString& titre) {
 
 QDoubleSpinBox* Panneau::nombre(QFormLayout* f, const QString& libelle, double min, double max, std::function<double()> lire,
                                 std::function<void(Projet&, double)> ecrire) {
-  auto* s = new QDoubleSpinBox;
+  auto* s = new ChampNombre;
   s->setRange(min, max);
   s->setDecimals(2);
   s->setSingleStep(0.5);
@@ -158,6 +159,7 @@ void Panneau::lecture(QVBoxLayout* colonne, std::function<QString()> lire) {
 void Panneau::construireProprietes() {
   m_synchros.clear();
   m_cibleConstruite = m_doc->selection();
+  m_carteLibre = m_doc->projet().carte.libre();
   auto* page = new QWidget;
   auto* colonne = new QVBoxLayout(page);
   Document* doc = m_doc;
@@ -251,7 +253,9 @@ void Panneau::construireProprietes() {
       for (QWidget* w : champsPosition) w->setEnabled(!K().verrou);
       ancrage->setEnabled(!K().verrou);
     });
-    f->addRow(QString(), verrou);
+    verrou->setText(QStringLiteral("Verrouiller la position (Ctrl+L)"));
+    verrou->setStyleSheet(QStringLiteral("font-weight: 600; padding: 4px 0;"));
+    colonne->insertWidget(1, verrou);
     lecture(colonne, [doc, K] {
       const Composant& k = K();
       const Projet& p = doc->projet();
@@ -344,6 +348,18 @@ void Panneau::construireProprietes() {
     });
     m_synchros.push_back([fixation, Tm] { const QSignalBlocker b(fixation); fixation->setCurrentIndex(fixation->findData(qs(Tm().fixation))); });
     f->addRow(QStringLiteral("Montage"), fixation);
+    f = groupe(colonne, QStringLiteral("Dimensions (personnalisables)"));
+    nombre(f, QStringLiteral("Trou dans la carte (Ø)"), 0.5, 20, [TP] { return TP().vis.trou; }, [id](Projet& p, double v) { for (auto& t : p.trous) if (t.id == id) t.diamTrou = v; });
+    nombre(f, QStringLiteral("Pastille de cuivre (Ø)"), 1, 30, [TP] { return TP().vis.tete; }, [id](Projet& p, double v) { for (auto& t : p.trous) if (t.id == id) t.diamPastille = v; });
+    nombre(f, QStringLiteral("Pilier (Ø)"), 2, 40, [TP] { return 2 * TP().Rb; }, [id](Projet& p, double v) { for (auto& t : p.trous) if (t.id == id) t.diamPilier = v; });
+    nombre(f, QStringLiteral("Avant-trou ou logement (Ø)"), 0.5, 30, [TP] { return 2 * TP().rp; }, [id](Projet& p, double v) { for (auto& t : p.trous) if (t.id == id) t.diamLogement = v; });
+    nombre(f, QStringLiteral("Longueur de l’insert"), 1, 30, [TP] { return TP().insert ? TP().longInsert : 0.0; },
+           [id](Projet& p, double v) { for (auto& t : p.trous) if (t.id == id) t.longueurInsert = v; });
+    auto* standard = new QPushButton(QStringLiteral("Revenir aux dimensions standard"));
+    connect(standard, &QPushButton::clicked, this, [modifierTrou] {
+      modifierTrou([](Projet&, Trou& t) { t.diamTrou.reset(); t.diamPastille.reset(); t.diamPilier.reset(); t.diamLogement.reset(); t.longueurInsert.reset(); });
+    });
+    colonne->addWidget(standard);
     lecture(colonne, [doc, TP] {
       const TrouPlace& t = TP();
       const QString base = QStringLiteral("Trou de Ø %1 dans la carte, pastille de Ø %2. Pilier de Ø %3 × %4")
@@ -370,10 +386,25 @@ void Panneau::construireProprietes() {
     QFormLayout* f = groupe(colonne, QStringLiteral("Projet"));
     texte(f, QStringLiteral("Nom"), [doc] { return doc->projet().nom; }, [](Projet& p, const std::string& v) { p.nom = v.substr(0, 80); });
     f = groupe(colonne, QStringLiteral("Carte"));
-    auto bornerRayon = [](Projet& p) { p.carte.r = std::min(p.carte.r, std::min(p.carte.L, p.carte.W) / 2 - 0.5); };
-    nombre(f, QStringLiteral("Longueur"), 10, 300, [doc] { return doc->projet().carte.L; }, [bornerRayon](Projet& p, double v) { p.carte.L = v; bornerRayon(p); });
-    nombre(f, QStringLiteral("Largeur"), 10, 300, [doc] { return doc->projet().carte.W; }, [bornerRayon](Projet& p, double v) { p.carte.W = v; bornerRayon(p); });
-    nombre(f, QStringLiteral("Rayon des angles"), 0, 50, [doc] { return doc->projet().carte.r; }, [](Projet& p, double v) { p.carte.r = std::min(v, std::min(p.carte.L, p.carte.W) / 2 - 0.5); });
+    if (doc->projet().carte.libre()) {
+      const auto& contours = doc->projet().carte.contours;
+      int arcs = 0, elements = 0;
+      for (const auto& k : contours) {
+        elements += static_cast<int>(k.elements.size());
+        for (const auto& e : k.elements) arcs += e.milieu ? 1 : 0;
+      }
+      auto* info = new QLabel(QStringLiteral("Contour de forme libre : %1 éléments dont %2 arcs%3. Encombrement %4 × %5.")
+                                  .arg(elements).arg(arcs)
+                                  .arg(contours.size() > 1 ? QStringLiteral(", %1 découpe(s) intérieure(s)").arg(contours.size() - 1) : QString())
+                                  .arg(mm(doc->projet().carte.L), mm(doc->projet().carte.W)));
+      info->setWordWrap(true);
+      f->addRow(info);
+    } else {
+      auto bornerRayon = [](Projet& p) { p.carte.r = std::min(p.carte.r, std::min(p.carte.L, p.carte.W) / 2 - 0.5); };
+      nombre(f, QStringLiteral("Longueur"), 10, 300, [doc] { return doc->projet().carte.L; }, [bornerRayon](Projet& p, double v) { p.carte.L = v; bornerRayon(p); });
+      nombre(f, QStringLiteral("Largeur"), 10, 300, [doc] { return doc->projet().carte.W; }, [bornerRayon](Projet& p, double v) { p.carte.W = v; bornerRayon(p); });
+      nombre(f, QStringLiteral("Rayon des angles"), 0, 50, [doc] { return doc->projet().carte.r; }, [](Projet& p, double v) { p.carte.r = std::min(v, std::min(p.carte.L, p.carte.W) / 2 - 0.5); });
+    }
     auto* ep = new QComboBox;
     for (double e : EPAISSEURS_PCB) ep->addItem(qs(fmt(e, 1)) + QStringLiteral(" mm"), e);
     ep->setCurrentIndex(ep->findData(doc->projet().carte.t));

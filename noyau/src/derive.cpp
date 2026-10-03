@@ -19,11 +19,11 @@ GeoComp geoComp(const Projet& p, const Derive& d, const Composant& k) {
     const double jeu = p.boitier.jeu, u = leLongComposant(p, k);
     if (*k.bord == Bord::E || *k.bord == Bord::W) {
       const double s = *k.bord == Bord::E ? 1 : -1;
-      g.face = c.x0 + s * (c.L / 2 + jeu - k.ecart);
+      g.face = d.bordCarte(*k.bord, u) + s * (jeu - k.ecart);
       g.x = g.face - s * k.d / 2; g.y = u; g.hx = k.d / 2; g.hy = k.w / 2;
     } else {
       const double s = *k.bord == Bord::N ? 1 : -1;
-      g.face = c.y0 + s * (c.W / 2 + jeu - k.ecart);
+      g.face = d.bordCarte(*k.bord, u) + s * (jeu - k.ecart);
       g.y = g.face - s * k.d / 2; g.x = u; g.hx = k.w / 2; g.hy = k.d / 2;
     }
     g.decoupe = DecoupeMur{*k.bord, u, d.zpt + k.zc, k.decoupe.w, k.decoupe.h, k.decoupe.r};
@@ -43,7 +43,7 @@ GeoComp geoComp(const Projet& p, const Derive& d, const Composant& k) {
 bool dansLevre(const Derive& d, const GeoComp& g) {
   double m = -std::numeric_limits<double>::infinity();
   const std::array<Point, 4> coins{{{g.x1, g.y1}, {g.x2, g.y1}, {g.x2, g.y2}, {g.x1, g.y2}}};
-  for (const auto& q : coins) m = std::max(m, sdRR(q.x, q.y, d.cx, d.cy, d.li.hx, d.li.hy, d.li.r));
+  for (const auto& q : coins) m = std::max(m, d.sdLevreInt(q.x, q.y));
   return m > -0.2;
 }
 
@@ -74,6 +74,11 @@ Derive deriver(const Projet& p) {
   d.lo = {d.Li / 2 - Levre::jeu, d.Wi / 2 - Levre::jeu, std::max(d.ri - Levre::jeu, 0.3)};
   d.li = {d.lo.hx - Levre::ep, d.lo.hy - Levre::ep, std::max(d.lo.r - Levre::ep, 0.3)};
   d.sb = d.Li / 2 - d.ri; d.sa = d.Wi / 2 - d.ri;
+  d.libre = c.libre();
+  d.jeu = b.jeu;
+  d.carteRR = {c.L / 2, c.W / 2, c.r};
+  if (d.libre)
+    for (const auto& k : c.contours) d.forme.polygones.push_back(k.polygone(0.2));
   for (const auto& t : p.trous) {
     const Point q = posTrou(p, t);
     TrouPlace tp;
@@ -81,10 +86,12 @@ Derive deriver(const Projet& p) {
     tp.nomVis = t.vis.value_or(b.vis);
     tp.vis = vis(tp.nomVis);
     tp.insert = t.fixation == "insert";
-    tp.rp = tp.insert ? insert(tp.nomVis).trou / 2 : tp.vis.avant / 2;
-    tp.Rb = tp.rp + PAROI_PILIER;
+    if (t.diamTrou) tp.vis.trou = *t.diamTrou;
+    if (t.diamPastille) tp.vis.tete = *t.diamPastille;
+    tp.rp = t.diamLogement ? *t.diamLogement / 2 : tp.insert ? insert(tp.nomVis).trou / 2 : tp.vis.avant / 2;
+    tp.Rb = t.diamPilier ? std::max(*t.diamPilier / 2, tp.rp + 0.4) : tp.rp + PAROI_PILIER;
     tp.rTete = tp.vis.tete / 2 + 0.6;
-    tp.longInsert = tp.insert ? insert(tp.nomVis).longueur : 0;
+    tp.longInsert = tp.insert ? t.longueurInsert.value_or(insert(tp.nomVis).longueur) : 0;
     tp.longVis = longueurVis(c.t, tp.vis);
     d.trous.push_back(tp);
   }
@@ -100,9 +107,7 @@ std::map<Bord, std::vector<DecoupeValide>> decoupesValides(const Derive& d) {
   for (const auto& g : d.comps) {
     if (!g.decoupe) continue;
     const auto& o = *g.decoupe;
-    const bool hz = horizontal(o.mur);
-    const double centre = hz ? d.cx : d.cy, demi = hz ? d.sb : d.sa;
-    if (std::abs(o.u - centre) + o.w / 2 > demi - 0.3) continue;
+    if (!decoupeSurPartieDroite(d, o)) continue;
     if (o.zc - o.h / 2 < d.zf + 0.3 || o.zc + o.h / 2 > d.zt - 0.3) continue;
     auto& lst = res[o.mur];
     const bool conflit = std::any_of(lst.begin(), lst.end(), [&](const DecoupeValide& q) {
@@ -117,7 +122,7 @@ std::map<Bord, std::vector<DecoupeValide>> decoupesValides(const Derive& d) {
 std::vector<PilierValide> piliersValides(const Derive& d) {
   std::vector<PilierValide> res;
   for (const auto& t : d.trous) {
-    if (sdRR(t.x, t.y, d.cx, d.cy, d.Li / 2, d.Wi / 2, d.ri) > -(t.Rb + 0.25)) continue;
+    if (d.sdCavite(t.x, t.y) > -(t.Rb + 0.25)) continue;
     const bool conflit = std::any_of(res.begin(), res.end(), [&](const PilierValide& q) { return std::hypot(q.x - t.x, q.y - t.y) < q.Rb + t.Rb + 0.25; });
     if (conflit) continue;
     res.push_back({t.x, t.y, t.id, t.Rb, t.rp});
@@ -130,12 +135,48 @@ std::vector<PercageValide> percagesValides(const Derive& d) {
   for (const auto& g : d.comps) {
     if (!g.trouCouvercle) continue;
     const auto& o = *g.trouCouvercle;
-    if (sdRR(o.x, o.y, d.cx, d.cy, d.li.hx, d.li.hy, d.li.r) > -(o.d / 2 + 0.3)) continue;
+    if (d.sdLevreInt(o.x, o.y) > -(o.d / 2 + 0.3)) continue;
     const bool conflit = std::any_of(res.begin(), res.end(), [&](const PercageValide& q) { return std::hypot(q.x - o.x, q.y - o.y) < (q.d + o.d) / 2 + 0.4; });
     if (conflit) continue;
     res.push_back({o.x, o.y, o.d, g.id});
   }
   return res;
+}
+
+}  // namespace prom
+
+namespace prom {
+
+double Derive::sdCarte(double x, double y) const {
+  if (libre) return forme.sd(x, y);
+  return sdRR(x, y, cx, cy, carteRR.hx, carteRR.hy, carteRR.r);
+}
+double Derive::sdCavite(double x, double y) const {
+  if (libre) return forme.sd(x, y) - jeu;
+  return sdRR(x, y, cx, cy, Li / 2, Wi / 2, ri);
+}
+double Derive::sdLevreInt(double x, double y) const {
+  if (libre) return forme.sd(x, y) - (jeu - Levre::jeu - Levre::ep);
+  return sdRR(x, y, cx, cy, li.hx, li.hy, li.r);
+}
+double Derive::bordCarte(Bord b, double u) const {
+  const double rect = b == Bord::N ? cy + carteRR.hy : b == Bord::S ? cy - carteRR.hy : b == Bord::E ? cx + carteRR.hx : cx - carteRR.hx;
+  return libre ? forme.bordSelon(b, u, rect) : rect;
+}
+
+bool decoupeSurPartieDroite(const Derive& d, const DecoupeMur& o) {
+  if (!d.libre) {
+    const bool hz = horizontal(o.mur);
+    const double centre = hz ? d.cx : d.cy, demi = hz ? d.sb : d.sa;
+    return std::abs(o.u - centre) + o.w / 2 <= demi - 0.3;
+  }
+  // Contour libre : le bord doit rester droit sur toute la largeur de la découpe, plus une marge.
+  const double ref = d.bordCarte(o.mur, o.u);
+  for (int i = 0; i <= 8; ++i) {
+    const double s = o.u - o.w / 2 - 0.5 + (o.w + 1.0) * i / 8;
+    if (std::abs(d.bordCarte(o.mur, s) - ref) > 0.2) return false;
+  }
+  return true;
 }
 
 }  // namespace prom

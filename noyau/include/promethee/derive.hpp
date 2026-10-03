@@ -34,6 +34,14 @@ struct GeoComp {
   std::optional<Percage> trouCouvercle;
 };
 
+// Forme réelle d'une carte libre, discrétisée pour les calculs de distance.
+struct FormeCarte {
+  std::vector<std::vector<Point>> polygones;  // [0] extérieur, puis découpes
+  double sd(double x, double y) const;        // distance signée au bord (négative sur la carte)
+  // Coordonnée du bord extrême rencontré par la droite x = u (bords N et S) ou y = u (bords E et W).
+  double bordSelon(Bord b, double u, double defaut) const;
+};
+
 struct TrouPlace {
   std::string id, ref;
   double x = 0, y = 0;
@@ -58,7 +66,18 @@ struct Derive {
   std::vector<GeoComp> comps;
   int longVis = 0;
   double H = 0, zt = 0, ztop = 0, zLevre = 0;
+  // Forme de la carte : rectangle arrondi, ou contour quelconque (libre).
+  bool libre = false;
+  double jeu = 0;
+  RectArrondi carteRR;
+  FormeCarte forme;
+  double sdCarte(double x, double y) const;     // distance signée au bord de la carte
+  double sdCavite(double x, double y) const;    // à la face intérieure des parois
+  double sdLevreInt(double x, double y) const;  // au bord intérieur de la lèvre du couvercle
+  double bordCarte(Bord b, double u) const;     // position du bord de la carte au droit de u
 };
+// Une découpe de paroi doit tomber sur une partie droite du bord, loin des angles.
+bool decoupeSurPartieDroite(const Derive& d, const DecoupeMur& o);
 
 Derive deriver(const Projet& p);
 double hauteurIdeale(const Projet& p, const Derive& d);

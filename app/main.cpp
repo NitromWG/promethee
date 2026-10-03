@@ -1,4 +1,5 @@
 // Prométhée : application de bureau. Licence GPL-3.0-only.
+#include <clocale>
 #include <cstdlib>
 
 #include <QApplication>
@@ -6,7 +7,9 @@
 #include <QPalette>
 #include <QStyleFactory>
 #include <QSurfaceFormat>
+#include <QMouseEvent>
 #include <QTimer>
+#include <cstdio>
 
 #include "Document.hpp"
 #include "FenetrePrincipale.hpp"
@@ -33,9 +36,11 @@ int main(int argc, char** argv) {
   QSurfaceFormat::setDefaultFormat(format);
 
   QApplication app(argc, argv);
+  // Qt adopte la langue du système (virgule décimale) : on garde le point pour lire et écrire les fichiers.
+  std::setlocale(LC_NUMERIC, "C");
   QCoreApplication::setApplicationName(QStringLiteral("Prométhée"));
   QCoreApplication::setOrganizationName(QStringLiteral("Prométhée"));
-  QCoreApplication::setApplicationVersion(QStringLiteral("0.3.0"));
+  QCoreApplication::setApplicationVersion(QStringLiteral("0.4.0"));
   QLocale::setDefault(QLocale(QLocale::French, QLocale::France));
 
   // Thème clair et cohérent, quel que soit le thème du système : papier, encre et cuivre, comme le prototype.
@@ -103,8 +108,18 @@ int main(int argc, char** argv) {
   // --essai : déroule un scénario d'utilisation (déplacer un trou, agrandir la carte, ajouter une LED,
   // grandir un condensateur, annuler, rétablir) pour vérifier que toutes les vues suivent sans planter.
   const bool essai = args.removeAll(QStringLiteral("--essai")) > 0;
+  // --essai-rotation : vérifie qu'on peut faire un tour complet de la caméra sans butée.
+  const bool essaiRotation = args.removeAll(QStringLiteral("--essai-rotation")) > 0;
+  // --kicad carte.kicad_pcb : importe une carte KiCad au démarrage.
+  const int kicad = static_cast<int>(args.indexOf(QStringLiteral("--kicad")));
+  QString carteKicad;
+  if (kicad > 0 && kicad + 1 < args.size()) {
+    carteKicad = args.at(kicad + 1);
+    args.remove(kicad, 2);
+  }
   if (args.size() > 1) fenetre.ouvrirFichier(args.at(1));
   fenetre.show();
+  if (!carteKicad.isEmpty()) QTimer::singleShot(300, &fenetre, [&fenetre, carteKicad] { fenetre.importerFichierKicad(carteKicad, false); });
   if (essai)
     QTimer::singleShot(800, &fenetre, [&fenetre] {
       Document* doc = fenetre.document();
@@ -130,6 +145,26 @@ int main(int argc, char** argv) {
       });
       for (const auto& k : doc->projet().composants) if (k.ref == "U1") doc->selectionner({Cible::Composant, k.id});
       fenetre.vue3D()->setCouvercle(Vue3D::Couvercle::Souleve);
+    });
+  if (essaiRotation)
+    QTimer::singleShot(1500, &fenetre, [&fenetre] {
+      Vue3D* v = fenetre.vue3D();
+      const QPointF c(v->width() / 2.0, v->height() / 2.0);
+      auto envoyer = [v](QEvent::Type t, QPointF p, Qt::MouseButton b, Qt::MouseButtons bs) {
+        QMouseEvent ev(t, p, v->mapToGlobal(p), b, bs, Qt::NoModifier);
+        QCoreApplication::sendEvent(v, &ev);
+      };
+      const gp_Dir avant = v->directionCamera();
+      envoyer(QEvent::MouseButtonPress, c, Qt::LeftButton, Qt::LeftButton);
+      double pireAlignement = 1.0;
+      const int pas = 2, total = 838;  // 838 pixels × 0,0075 rad ≈ un tour complet
+      for (int i = pas; i <= total; i += pas) {
+        envoyer(QEvent::MouseMove, c + QPointF(0, i), Qt::NoButton, Qt::LeftButton);
+        pireAlignement = std::min(pireAlignement, v->directionCamera().Dot(avant));
+      }
+      envoyer(QEvent::MouseButtonRelease, c + QPointF(0, total), Qt::LeftButton, Qt::NoButton);
+      std::printf("rotation verticale : alignement final %.4f, le plus opposé %.4f\n", v->directionCamera().Dot(avant), pireAlignement);
+      std::fflush(stdout);
     });
   if (!image.isEmpty())
     QTimer::singleShot(3000, &fenetre, [&fenetre, image] {

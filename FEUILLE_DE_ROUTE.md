@@ -17,7 +17,7 @@ Le logiciel se construit par lots. Un lot regroupe les étapes qui dépendent le
 
 | Lot | Étapes menées de front | Pourquoi ensemble | Rendez-vous |
 | --- | --- | --- | --- |
-| 1.A | Import KiCad (.kicad_pcb) ; export vers KiCad ; format de projet versionné avec migrations | L'aller-retour avec KiCad dicte ce que le format doit stocker : empreintes, modèles 3D, hauteurs, connecteurs de bord | Une vraie carte KiCad importée, son boîtier généré puis imprimé |
+| 1.A | Import KiCad (.kicad_pcb) ; cartes de forme quelconque et boîtier qui épouse le contour (fait en 0.4) ; export vers KiCad ; format de projet versionné avec migrations | L'aller-retour avec KiCad dicte ce que le format doit stocker : empreintes, modèles 3D, hauteurs, connecteurs de bord | Une vraie carte KiCad importée, son boîtier généré puis imprimé |
 | 1.B | Contraintes entre éléments (alignement, distance, symétrie) prolongeant les ancrages de la version 0.3 ; esquisses paramétriques (solveur) ; fonctions volumiques ; arbre de construction ; nommage topologique ; boîtier généré rendu modifiable | Le nommage topologique se conçoit avec l'arbre dès le départ, sinon tout est à reprendre (FreeCAD y a laissé des années) | Modéliser une pièce réelle et ajouter ouvertures et nervures au boîtier |
 | 1.C | Mise en plan (vues, coupes, cotation, cartouche) ; exports de fabrication (PDF, DXF, SVG, STEP, STL, 3MF, dossier complet) | Ils partagent la projection à lignes cachées et le modèle de calques | Un plan coté conforme aux habitudes d'un bureau d'études |
 | 1.D | Nomenclature unique ; structure du répertoire fournisseurs ; scripts Python et mode sans écran | Mêmes accès au modèle, même interface de programmation | Un script qui génère une variante de produit |

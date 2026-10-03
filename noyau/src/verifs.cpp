@@ -32,7 +32,7 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
                        std::optional<Correction> fix = std::nullopt) {
     pb.push_back({sev, code, std::move(msg), std::move(ids), std::move(fix)});
   };
-  auto sdCarte = [&c](double x, double y) { return sdRR(x, y, c.x0, c.y0, c.L / 2, c.W / 2, c.r); };
+  auto sdCarte = [&d](double x, double y) { return d.sdCarte(x, y); };
   const Correction corrHauteur{"Ajuster la hauteur", "hauteur", "", 0};
   const auto E = Severite::Erreur, A = Severite::Alerte;
 
@@ -59,9 +59,9 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
       if (portee > k.d - 2)
         ajouter(E, "connecteur_porte", g.ref + " dépasse de " + fmt(portee) + " mm du bord de la carte : il ne reste que " + fmt(k.d - portee) + " mm pour le souder.", {g.id});
       const auto& o = *g.decoupe;
-      const double centre = hz ? d.cx : d.cy, demi = hz ? d.sb : d.sa;
-      if (std::abs(o.u - centre) + o.w / 2 > demi - 0.3)
-        ajouter(E, "decoupe_angle", "La découpe de " + g.ref + " tombe dans l\u2019angle du boîtier. Rapproche le connecteur du milieu du bord.", {g.id});
+      if (!decoupeSurPartieDroite(d, o))
+        ajouter(E, "decoupe_angle", d.libre ? "La découpe de " + g.ref + " tombe sur une partie courbe ou un angle du contour. Place le connecteur sur une portion droite du bord."
+                                            : "La découpe de " + g.ref + " tombe dans l\u2019angle du boîtier. Rapproche le connecteur du milieu du bord.", {g.id});
       if (o.zc - o.h / 2 < d.zf + 0.3)
         ajouter(E, "decoupe_bas", "La découpe de " + g.ref + " descend dans le fond du boîtier.", {g.id});
       else if (o.zc + o.h / 2 > d.zt - 0.3)
@@ -72,7 +72,18 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
       double hors = -std::numeric_limits<double>::infinity();
       const std::array<Point, 4> coins{{{g.x1, g.y1}, {g.x2, g.y1}, {g.x2, g.y2}, {g.x1, g.y2}}};
       for (const auto& q : coins) hors = std::max(hors, sdCarte(q.x, q.y));
-      if (hors > 0.01) ajouter(E, "hors_carte", g.ref + " dépasse du bord de la carte de " + fmt(hors) + " mm.", {g.id});
+      const Composant* k = nullptr;
+      for (const auto& q : p.composants) if (q.id == g.id) k = &q;
+      if (k && k->origine == "kicad") {
+        // Placé par KiCad : il peut déborder de la carte, à condition de rester à l'écart de la paroi.
+        if (hors > b.jeu - 0.3) {
+          const double j2 = std::ceil((hors + 0.4) * 2) / 2;
+          ajouter(E, "touche_paroi", g.ref + " déborde de la carte de " + fmt(hors) + " mm et touche la paroi du boîtier.", {g.id},
+                  Correction{"Jeu de " + fmt(j2) + " mm autour de la carte", "jeu", "", j2});
+        }
+      } else if (hors > 0.01) {
+        ajouter(E, "hors_carte", g.ref + " dépasse du bord de la carte de " + fmt(hors) + " mm.", {g.id});
+      }
     }
   }
   std::vector<const GeoComp*> decs;
@@ -88,6 +99,14 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
     for (size_t j = i + 1; j < d.comps.size(); ++j) {
       const auto& a = d.comps[i];
       const auto& e = d.comps[j];
+      // Deux composants placés par KiCad : l'implantation relève de la vérification de KiCad (zones de placement exactes).
+      bool deuxKicad = true;
+      for (const auto* g2 : {&a, &e}) {
+        bool kicad = false;
+        for (const auto& q : p.composants) if (q.id == g2->id) kicad = q.origine == "kicad";
+        deuxKicad = deuxKicad && kicad;
+      }
+      if (deuxKicad) continue;
       if (a.x1 < e.x2 - 0.05 && e.x1 < a.x2 - 0.05 && a.y1 < e.y2 - 0.05 && e.y1 < a.y2 - 0.05)
         ajouter(E, "chevauchement", a.ref + " et " + e.ref + " se chevauchent.", {a.id, e.id});
     }
@@ -104,7 +123,7 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
       ajouter(E, "trou_bord", "Le trou " + t.ref + " est à " + fmt(bord) + " mm du bord de la carte (" + fmt(minBord) + " mm au minimum).", {t.id},
               Correction{"Éloigner du bord", "trou", t.id, 0});
     else {
-      const double paroi = -sdRR(t.x, t.y, d.cx, d.cy, d.Li / 2, d.Wi / 2, d.ri);
+      const double paroi = -d.sdCavite(t.x, t.y);
       if (paroi < t.Rb + 0.3)
         ajouter(E, "pilier_paroi", "Le pilier du trou " + t.ref + " touche la paroi du boîtier.", {t.id}, Correction{"Éloigner de la paroi", "trou", t.id, 0});
     }
@@ -131,7 +150,7 @@ std::vector<Probleme> verifier(const Projet& p, const Derive& d) {
     }
     if (g.trouCouvercle) {
       const auto& o = *g.trouCouvercle;
-      if (sdRR(o.x, o.y, d.cx, d.cy, d.li.hx, d.li.hy, d.li.r) > -(o.d / 2 + 0.3))
+      if (d.sdLevreInt(o.x, o.y) > -(o.d / 2 + 0.3))
         ajouter(E, "trou_couvercle", "Le perçage de " + g.ref + " dans le couvercle tombe sur la lèvre.", {g.id});
     }
   }
@@ -182,8 +201,8 @@ void repousserTrou(Projet& p, const std::string& id) {
   for (int i = 0; i < 400; ++i) {
     const Derive d = deriver(p);
     const Point q = posTrou(p, *t);
-    const double bord = -sdRR(q.x, q.y, c.x0, c.y0, c.L / 2, c.W / 2, c.r);
-    const double paroi = -sdRR(q.x, q.y, d.cx, d.cy, d.Li / 2, d.Wi / 2, d.ri);
+    const double bord = -d.sdCarte(q.x, q.y);
+    const double paroi = -d.sdCavite(q.x, q.y);
     double rTrou = d.vis.trou / 2, Rb = d.Rb;
     for (const auto& tp : d.trous) if (tp.id == id) { rTrou = tp.vis.trou / 2; Rb = tp.Rb; }
     if (bord >= rTrou + 1 && paroi >= Rb + 0.3) break;
@@ -205,6 +224,8 @@ void corriger(Projet& p, const Correction& fix) {
     b.hauteur = borne(hauteurIdeale(p, deriver(p)), b.entretoise + p.carte.t + 1, 200);
   } else if (fix.type == "ecart") {
     for (auto& k : p.composants) if (k.id == fix.id) k.ecart = 0.4;
+  } else if (fix.type == "jeu") {
+    p.boitier.jeu = fix.valeur;
   } else if (fix.type == "entretoise") {
     b.entretoise = borne(fix.valeur, 1, 30);
     b.hauteur = std::max(b.hauteur, b.entretoise + p.carte.t + 1);

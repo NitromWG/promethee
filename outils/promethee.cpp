@@ -1,4 +1,5 @@
 // Prométhée : outil en ligne de commande (mode sans écran prévu par le CDC). Licence GPL-3.0-only.
+#include <algorithm>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -14,6 +15,7 @@
 
 #include "promethee/derive.hpp"
 #include "promethee/geometrie.hpp"
+#include "promethee/kicad.hpp"
 #include "promethee/modele.hpp"
 #include "promethee/verifs.hpp"
 
@@ -24,12 +26,14 @@ namespace {
 
 void aide() {
   std::cout <<
-      "Prométhée 0.1, outil en ligne de commande\n\n"
+      "Prométhée 0.4, outil en ligne de commande\n\n"
       "Utilisation :\n"
       "  promethee verifier <projet.prom.json>             vérifie la carte et le boîtier\n"
       "  promethee corriger <projet.prom.json> [sortie]    applique les corrections automatiques\n"
       "  promethee exporter <projet.prom.json> <dossier>   produit les pièces STEP et STL\n"
-      "  promethee exemple <fichier.prom.json>             écrit le projet d’exemple\n\n"
+      "  promethee exemple <fichier.prom.json>             écrit le projet d’exemple\n"
+      "  promethee kicad <carte.kicad_pcb>                 résume une carte KiCad (contour, trous, empreintes)\n"
+      "  promethee importer-kicad <carte.kicad_pcb> <projet.prom.json>   crée le projet Prométhée de cette carte\n\n"
       "Les fichiers .prom.json sont ceux du prototype web : un projet passe de l’un à l’autre.\n";
 }
 
@@ -93,6 +97,27 @@ int exporterCmd(const std::string& chemin, const std::string& dossier) {
   return erreurs > 0 ? 1 : 0;
 }
 
+int kicadCmd(const std::string& chemin) {
+  const CarteKicad c = lireFichierKicad(chemin);
+  std::cout << (c.titre.empty() ? std::string("Carte KiCad") : c.titre) << " : " << fmt(c.xmax - c.xmin, 2) << " × " << fmt(c.ymax - c.ymin, 2)
+            << " mm, épaisseur " << fmt(c.epaisseur, 2) << " mm.\n";
+  if (c.contours.empty()) std::cout << "Aucun contour Edge.Cuts.\n";
+  for (size_t i = 0; i < c.contours.size(); ++i) {
+    const auto& k = c.contours[i];
+    const auto arcs = std::count_if(k.elements.begin(), k.elements.end(), [](const ElementContour& e) { return e.milieu.has_value(); });
+    std::cout << (i == 0 ? "  contour extérieur : " : "  découpe intérieure : ") << k.elements.size() << " éléments dont " << arcs << " arcs, "
+              << (k.ferme ? "fermé" : "OUVERT") << ", " << fmt(std::abs(k.aire()), 1) << " mm².\n";
+  }
+  int fixations = 0;
+  for (const auto& f : c.empreintes)
+    if (f.fixation) {
+      ++fixations;
+      std::cout << "  trou de fixation " << f.ref << " : Ø " << fmt(f.percage, 2) << " mm en (" << fmt(f.position.x - c.xmin, 2) << " ; " << fmt(f.position.y - c.ymin, 2) << ")\n";
+    }
+  std::cout << c.empreintes.size() << " empreintes, dont " << fixations << " trous de fixation.\n";
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -104,6 +129,15 @@ int main(int argc, char** argv) {
     if (a.size() == 2 && a[0] == "verifier") return verifierCmd(a[1]);
     if ((a.size() == 2 || a.size() == 3) && a[0] == "corriger") return corrigerCmd(a[1], a.size() == 3 ? a[2] : a[1]);
     if (a.size() == 3 && a[0] == "exporter") return exporterCmd(a[1], a[2]);
+    if (a.size() == 2 && a[0] == "kicad") return kicadCmd(a[1]);
+    if (a.size() == 3 && a[0] == "importer-kicad") {
+      RapportImport r;
+      const Projet p = projetDepuisKicad(lireFichierKicad(a[1]), "", &r);
+      ecrireProjet(p, a[2]);
+      std::cout << "Projet écrit : contour réel, " << r.trous << " trous de fixation, " << r.composants << " composants (dont " << r.connecteursBord
+                << " connecteurs de bord), " << r.dessous << " composants de la face arrière ignorés.\n";
+      return 0;
+    }
     if (a.size() == 2 && a[0] == "exemple") { ecrireProjet(exemple(), a[1]); std::cout << "Écrit : " << a[1] << '\n'; return 0; }
     aide();
     return a.empty() || a[0] == "aide" || a[0] == "--help" ? 0 : 64;

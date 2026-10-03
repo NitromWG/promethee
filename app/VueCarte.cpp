@@ -7,10 +7,13 @@
 #include <map>
 
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QWheelEvent>
+
+#include "promethee/geometrie.hpp"
 
 using namespace prom;
 
@@ -68,8 +71,43 @@ void VueCarte::resizeEvent(QResizeEvent*) {
   if (!m_cadre) recadrer();
 }
 
+QPainterPath VueCarte::chemin(const std::vector<Point>& poly) const {
+  QPainterPath ch;
+  for (size_t i = 0; i < poly.size(); ++i) {
+    if (i == 0) ch.moveTo(ecran(poly[i].x, poly[i].y));
+    else ch.lineTo(ecran(poly[i].x, poly[i].y));
+  }
+  ch.closeSubpath();
+  return ch;
+}
+
+QPainterPath VueCarte::cheminCarte() const {
+  QPainterPath ch;
+  ch.setFillRule(Qt::OddEvenFill);
+  for (const auto& k : m_doc->projet().carte.contours) ch.addPath(chemin(k.polygone(0.2)));
+  return ch;
+}
+
+void VueCarte::actualiserParois() {
+  const Projet& p = m_doc->projet();
+  if (!p.carte.libre()) { m_cleParois.clear(); return; }
+  std::string cle = std::to_string(p.boitier.jeu) + "|" + std::to_string(p.boitier.paroi);
+  for (const auto& k : p.carte.contours)
+    for (const auto& e : k.elements) cle += "|" + std::to_string(e.debut.x) + "," + std::to_string(e.debut.y);
+  if (cle == m_cleParois) return;
+  m_cleParois = cle;
+  try {
+    m_paroiInt = contourDecale(p, p.boitier.jeu);
+    m_paroiExt = contourDecale(p, p.boitier.jeu + p.boitier.paroi);
+  } catch (const std::exception&) {
+    m_paroiInt.clear();
+    m_paroiExt.clear();
+  }
+}
+
 void VueCarte::paintEvent(QPaintEvent*) {
   if (!m_cadre) recadrer();
+  actualiserParois();
   QPainter g(this);
   g.setRenderHint(QPainter::Antialiasing);
   g.fillRect(rect(), PLAN);
@@ -112,9 +150,9 @@ void VueCarte::paintEvent(QPaintEvent*) {
   // Boîtier : parois, fond, découpes, piliers
   g.setPen(QPen(TRAIT, 1));
   g.setBrush(PAROI);
-  g.drawPath(rr(d.cx, d.cy, d.Lo / 2, d.Wo / 2, d.ro));
+  g.drawPath(c.libre() ? chemin(m_paroiExt) : rr(d.cx, d.cy, d.Lo / 2, d.Wo / 2, d.ro));
   g.setBrush(FOND);
-  g.drawPath(rr(d.cx, d.cy, d.Li / 2, d.Wi / 2, d.ri));
+  g.drawPath(c.libre() ? chemin(m_paroiInt) : rr(d.cx, d.cy, d.Li / 2, d.Wi / 2, d.ri));
   auto estFocus = [&](const std::string& id) { return sel.id == id || m_survol.id == id; };
   for (const auto& gc : d.comps) {
     if (!gc.decoupe) continue;
@@ -122,10 +160,10 @@ void VueCarte::paintEvent(QPaintEvent*) {
     double x1, x2, y1, y2;
     if (horizontal(o.mur)) {
       const double s = o.mur == Bord::N ? 1 : -1;
-      x1 = o.u - o.w / 2; x2 = o.u + o.w / 2; y1 = d.cy + s * d.Wi / 2; y2 = d.cy + s * d.Wo / 2;
+      x1 = o.u - o.w / 2; x2 = o.u + o.w / 2; y1 = d.bordCarte(o.mur, o.u) + s * p.boitier.jeu; y2 = y1 + s * p.boitier.paroi;
     } else {
       const double s = o.mur == Bord::E ? 1 : -1;
-      y1 = o.u - o.w / 2; y2 = o.u + o.w / 2; x1 = d.cx + s * d.Li / 2; x2 = d.cx + s * d.Lo / 2;
+      y1 = o.u - o.w / 2; y2 = o.u + o.w / 2; x1 = d.bordCarte(o.mur, o.u) + s * p.boitier.jeu; x2 = x1 + s * p.boitier.paroi;
     }
     const QRectF r = QRectF(ecran(std::min(x1, x2), std::max(y1, y2)), ecran(std::max(x1, x2), std::min(y1, y2)));
     QColor fond = CUIVRE;
@@ -142,7 +180,7 @@ void VueCarte::paintEvent(QPaintEvent*) {
   // Carte
   g.setPen(QPen(MASQUE_BORD, 1.2));
   g.setBrush(MASQUE);
-  g.drawPath(rr(c.x0, c.y0, c.L / 2, c.W / 2, c.r));
+  g.drawPath(c.libre() ? cheminCarte() : rr(c.x0, c.y0, c.L / 2, c.W / 2, c.r));
   g.setPen(QPen(QColor(244, 241, 230, 130), 1, Qt::DashLine));
   g.setBrush(Qt::NoBrush);
   for (const auto& t : d.trous) g.drawPath(cercle(t.x, t.y, t.Rb));
@@ -300,7 +338,8 @@ void VueCarte::paintEvent(QPaintEvent*) {
     } else if (cb.type == Cible::Trou) {
       for (const auto& t : d.trous) if (t.id == cb.id) g.drawPath(cercle(t.x, t.y, t.Rb + 2.5 / m_s));
     } else if (cb.type == Cible::Carte) {
-      g.drawPath(rr(c.x0, c.y0, c.L / 2 + 2.5 / m_s, c.W / 2 + 2.5 / m_s, c.r + 2.5 / m_s));
+      if (c.libre()) { g.setPen(QPen(CUIVRE, 3)); g.drawPath(cheminCarte()); }
+      else g.drawPath(rr(c.x0, c.y0, c.L / 2 + 2.5 / m_s, c.W / 2 + 2.5 / m_s, c.r + 2.5 / m_s));
     }
   };
   if (m_survol.type == Touche::Composant && m_survol.id != sel.id) contour({Cible::Composant, m_survol.id}, false);
@@ -363,7 +402,7 @@ void VueCarte::paintEvent(QPaintEvent*) {
       g.drawRoundedRect(QRectF(hd.x() - 2, hd.y() - 5, 10, 7), 1.5, 1.5);
     }
   }
-  if (sel.type == Cible::Carte) {
+  if (sel.type == Cible::Carte && !c.libre()) {
     for (const auto& [bord, x, y] : {std::tuple{'E', c.x0 + c.L / 2, c.y0}, std::tuple{'W', c.x0 - c.L / 2, c.y0}, std::tuple{'N', c.x0, c.y0 + c.W / 2},
                                      std::tuple{'S', c.x0, c.y0 - c.W / 2}}) {
       (void)bord;
@@ -380,7 +419,7 @@ VueCarte::Touche VueCarte::toucher(const QPointF& pt) const {
   const Projet& p = m_doc->projet();
   const Derive& d = m_doc->derive();
   const Carte& c = p.carte;
-  if (m_doc->selection().type == Cible::Carte) {
+  if (m_doc->selection().type == Cible::Carte && !c.libre()) {
     for (const auto& [bord, x, y] : {std::tuple{'E', c.x0 + c.L / 2, c.y0}, std::tuple{'W', c.x0 - c.L / 2, c.y0}, std::tuple{'N', c.x0, c.y0 + c.W / 2},
                                      std::tuple{'S', c.x0, c.y0 - c.W / 2}})
       if (std::hypot(x - w.x(), y - w.y()) <= tol * 1.4) return {Touche::Poignee, "", bord};
@@ -397,7 +436,7 @@ VueCarte::Touche VueCarte::toucher(const QPointF& pt) const {
     }
   }
   if (meilleur) return {Touche::Composant, meilleur->id};
-  if (sdRR(w.x(), w.y(), c.x0, c.y0, c.L / 2, c.W / 2, c.r) <= 0) return {Touche::Carte, "carte"};
+  if (d.sdCarte(w.x(), w.y()) <= 0) return {Touche::Carte, "carte"};
   return {};
 }
 
@@ -446,6 +485,7 @@ void VueCarte::mousePressEvent(QMouseEvent* e) {
   if (e->button() != Qt::LeftButton) {
     m_geste = Geste::Deplacement;
     m_cible = {};
+    m_cibleMenu = e->button() == Qt::RightButton ? toucher(e->position()) : Touche{};
     m_oxDepart = m_ox;
     m_oyDepart = m_oy;
     return;
@@ -500,9 +540,13 @@ void VueCarte::mouseMoveEvent(QMouseEvent* e) {
   }
 }
 
-void VueCarte::mouseReleaseEvent(QMouseEvent*) {
+void VueCarte::mouseReleaseEvent(QMouseEvent* e) {
   const Geste geste = m_geste;
   m_geste = Geste::Aucun;
+  if (e->button() == Qt::RightButton && !m_bouge) {
+    menuContextuel(e->globalPosition().toPoint());
+    return;
+  }
   if (geste == Geste::Objet) {
     if (m_bouge && m_cible.type == Touche::Trou) {
       const QPointF pos = positionObjet(m_cible);
@@ -560,6 +604,54 @@ void VueCarte::keyPressEvent(QKeyEvent* e) {
   }
   const QPointF pos = positionObjet(t);
   m_doc->modifier([&](Projet& p) { deplacer(p, t, pos.x() + dx, pos.y() + dy, true); });
+}
+
+void VueCarte::menuContextuel(const QPoint& ou) {
+  const Touche t = m_cibleMenu;
+  QMenu menu(this);
+  if (t.type == Touche::Composant) {
+    m_doc->selectionner({Cible::Composant, t.id});
+    const Composant* k = m_doc->composantSelectionne();
+    if (!k) return;
+    const std::string id = k->id;
+    QAction* verrou = menu.addAction(k->verrou ? QStringLiteral("Déverrouiller la position") : QStringLiteral("Verrouiller la position"));
+    verrou->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
+    connect(verrou, &QAction::triggered, this, [this, id] { m_doc->modifier([&](Projet& p) { for (auto& q : p.composants) if (q.id == id) q.verrou = !q.verrou; }); });
+    QAction* pivoter = menu.addAction(QStringLiteral("Pivoter de 90°"));
+    pivoter->setEnabled(!k->verrou && !k->bord);
+    connect(pivoter, &QAction::triggered, this, [this, id] { m_doc->modifier([&](Projet& p) { for (auto& q : p.composants) if (q.id == id) q.rot = (q.rot + 90) % 360; }); });
+    QMenu* ancrages = menu.addMenu(QStringLiteral("Ancrage"));
+    ancrages->setEnabled(!k->verrou);
+    const std::vector<std::pair<const char*, QString>> choix = k->bord
+        ? std::vector<std::pair<const char*, QString>>{{"libre", QStringLiteral("Reste à sa place")}, {"debut", QStringLiteral("Suit le début du bord")},
+                                                        {"fin", QStringLiteral("Suit la fin du bord")}, {"milieu", QStringLiteral("Suit le milieu du bord")}}
+        : std::vector<std::pair<const char*, QString>>{{"libre", QStringLiteral("Reste à sa place")}, {"NW", QStringLiteral("Suit le coin haut gauche")},
+                                                        {"NE", QStringLiteral("Suit le coin haut droit")}, {"SW", QStringLiteral("Suit le coin bas gauche")},
+                                                        {"SE", QStringLiteral("Suit le coin bas droit")}, {"centre", QStringLiteral("Suit le centre de la carte")}};
+    for (const auto& [cle, texte] : choix) {
+      QAction* a = ancrages->addAction(texte);
+      a->setCheckable(true);
+      a->setChecked(k->ancrage == cle);
+      const std::string an = cle;
+      connect(a, &QAction::triggered, this, [this, id, an] { m_doc->modifier([&](Projet& p) { for (auto& q : p.composants) if (q.id == id) changerAncrage(p, q, an); }); });
+    }
+    menu.addSeparator();
+    QAction* supprimer = menu.addAction(QStringLiteral("Supprimer"));
+    connect(supprimer, &QAction::triggered, this, [this, id] {
+      m_doc->modifier([&](Projet& p) { p.composants.erase(std::remove_if(p.composants.begin(), p.composants.end(), [&](const Composant& q) { return q.id == id; }), p.composants.end()); });
+    });
+  } else if (t.type == Touche::Trou) {
+    m_doc->selectionner({Cible::Trou, t.id});
+    const std::string id = t.id;
+    QAction* supprimer = menu.addAction(QStringLiteral("Supprimer le trou"));
+    connect(supprimer, &QAction::triggered, this, [this, id] {
+      m_doc->modifier([&](Projet& p) { p.trous.erase(std::remove_if(p.trous.begin(), p.trous.end(), [&](const Trou& q) { return q.id == id; }), p.trous.end()); });
+    });
+  } else {
+    QAction* recadrerAct = menu.addAction(QStringLiteral("Recadrer la vue"));
+    connect(recadrerAct, &QAction::triggered, this, &VueCarte::recadrer);
+  }
+  menu.exec(ou);
 }
 
 bool VueCarte::verrouille(const std::string& id) const {

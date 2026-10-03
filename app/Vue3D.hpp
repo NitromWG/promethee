@@ -15,6 +15,7 @@
 #include <AIS_ViewCube.hxx>
 #include <V3d_TypeOfOrientation.hxx>
 #include <V3d_View.hxx>
+#include <gp_Pnt.hxx>
 
 #include "Document.hpp"
 
@@ -29,6 +30,7 @@ public:
   void recadrer();
   void vueStandard(V3d_TypeOfOrientation orientation);  // transition animée vers une vue normalisée
   const QString& infoGl() const { return m_infoGl; }
+  gp_Dir directionCamera() const { return m_vue->Camera()->Direction(); }
   QSize minimumSizeHint() const override { return {240, 200}; }
   QSize sizeHint() const override { return {640, 480}; }
 
@@ -48,6 +50,12 @@ private:
   void afficherSelection();
   void placerCouvercle();
   bool transmettreSouris(QMouseEvent* e);
+  void tourner(double dx, double dy);
+  void cliquer(const QPointF& position, Qt::KeyboardModifiers modificateurs);
+  // Rotation au bouton gauche, gérée ici plutôt que par OpenCascade pour tourner sans butée.
+  struct Rotation { bool actif = false, bouge = false; QPointF depart, dernier; };
+  Rotation m_rotation;
+  gp_Pnt m_pivot;
 
   Document* m_doc;
   Handle(V3d_Viewer) m_visu;

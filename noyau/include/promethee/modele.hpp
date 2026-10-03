@@ -54,7 +54,27 @@ std::optional<Bord> bordDe(const std::string& s);
 inline bool horizontal(Bord b) { return b == Bord::N || b == Bord::S; }
 
 // ---------- Projet ----------
-struct Carte { double x0 = 0, y0 = 0, L = 60, W = 40, r = 2, t = 1.6; };
+struct Point { double x, y; };
+
+// Élément de contour : segment, ou arc passant par un point milieu (comme dans KiCad).
+struct ElementContour {
+  Point debut{}, fin{};
+  std::optional<Point> milieu;  // présent pour un arc
+};
+struct Contour {
+  std::vector<ElementContour> elements;  // dans l'ordre de parcours
+  bool ferme = false;
+  double aire() const;                   // aire signée du polygone approché (positive dans le sens direct)
+  std::vector<Point> polygone(double pas = 0.25) const;  // discrétisation, arcs compris
+};
+
+// Carte : rectangle à angles arrondis (L, W, r), ou contour quelconque si « contours » n'est pas vide
+// (le premier est l'extérieur, les suivants des découpes) ; L, W, x0 et y0 décrivent alors son encombrement.
+struct Carte {
+  double x0 = 0, y0 = 0, L = 60, W = 40, r = 2, t = 1.6;
+  std::vector<Contour> contours;
+  bool libre() const { return !contours.empty(); }
+};
 
 struct Boitier {
   double jeu = 1, paroi = 2, fond = 2, entretoise = 5, hauteur = 20, couvercle = 2;
@@ -70,6 +90,8 @@ struct Trou {
   std::string ancrage = "auto";     // "auto" (coin le plus proche à moins de 15 mm), "libre", ou un coin imposé
   std::optional<std::string> vis;   // vis propre à ce trou ; sinon celle du projet
   std::string fixation = "autotaraudeuse";  // ou "insert" (insert laiton posé à chaud)
+  // Dimensions personnalisées (diamètres en mm) ; à défaut, celles de la vis et de l'insert choisis.
+  std::optional<double> diamTrou, diamPastille, diamPilier, diamLogement, longueurInsert;
 };
 
 struct Composant {
@@ -87,6 +109,7 @@ struct Composant {
   std::string ancrage = "libre";
   double ax = 0, ay = 0;            // décalages d'ancrage
   bool verrou = false;              // ne se déplace pas à la souris ni au clavier
+  std::string origine;              // « kicad » : placé par la CAO électronique, qui vérifie déjà l'implantation
 };
 
 struct Projet {
@@ -104,9 +127,12 @@ Projet lireProjet(const std::string& chemin);                 // std::runtime_er
 void ecrireProjet(const Projet& p, const std::string& chemin);
 Projet exemple();
 Projet projetVide();
+// Recale L, W, x0, y0 sur l'encombrement du contour d'une carte libre.
+void recalerEncombrement(Carte& c);
+// Oriente les contours dans le sens direct et met l'extérieur (le plus grand) en premier.
+void orienterContours(std::vector<Contour>& contours);
 
 // ---------- Outils géométriques ----------
-struct Point { double x, y; };
 Point posTrou(const Projet& p, const Trou& t);
 void ancrerTrou(const Projet& p, Trou& t, double x, double y);  // ancre au coin le plus proche si à moins de 15 mm
 void placerSurBord(const Projet& p, Composant& k, double x, double y);
